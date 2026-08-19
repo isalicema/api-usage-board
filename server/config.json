@@ -1,0 +1,96 @@
+{
+  "_projectAliases_comment": "把重复/改名过的项目目录合并成一行统计，格式：{ 被归并路径: 目标路径 }。示例（按需替换成你自己的路径，默认留空）：",
+  "projectAliases": {},
+  "modelPrices": {
+    "_comment": "美元/百万 tokens，按模型名前缀匹配（最长匹配优先）。占位刊例价，待用户核实——未来型号真实价格未知。",
+    "claude-opus": {
+      "input": 15,
+      "output": 75,
+      "cacheRead": 1.5,
+      "cacheWrite": 18.75
+    },
+    "claude-sonnet": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 3.75
+    },
+    "claude-haiku": {
+      "input": 0.8,
+      "output": 4,
+      "cacheRead": 0.08,
+      "cacheWrite": 1
+    },
+    "gpt-5.6": {
+      "input": 2.5,
+      "output": 10,
+      "cacheRead": 0.25,
+      "cacheWrite": 2.5
+    },
+    "gpt-5.5": {
+      "input": 2,
+      "output": 8,
+      "cacheRead": 0.2,
+      "cacheWrite": 2
+    },
+    "codex-auto-review": {
+      "input": 2.5,
+      "output": 10,
+      "cacheRead": 0.25,
+      "cacheWrite": 2.5
+    },
+    "kimi-code": {
+      "input": 0.6,
+      "output": 2.5,
+      "cacheRead": 0.06,
+      "cacheWrite": 0.6
+    },
+    "deepseek": {
+      "input": 0.27,
+      "output": 1.1,
+      "cacheRead": 0.07,
+      "cacheWrite": 0.27
+    },
+    "grok": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.75,
+      "cacheWrite": 3
+    },
+    "_default": {
+      "input": 2,
+      "output": 8,
+      "cacheRead": 0.2,
+      "cacheWrite": 2
+    }
+  },
+  "cnyUsdRate": 7.2,
+  "subscriptions": {
+    "_comment": "订阅制渠道月付（原币种），ROI 统一按 cnyUsdRate 折算美元口径。cnyUsdRate 可改。",
+    "claude": {
+      "plan": "Pro",
+      "monthly": 20,
+      "currency": "USD"
+    },
+    "codex": {
+      "plan": "Pro",
+      "monthly": 200,
+      "currency": "USD"
+    },
+    "kimi": {
+      "plan": "会员",
+      "monthly": 199,
+      "currency": "CNY"
+    },
+    "grok": {
+      "plan": "Free",
+      "monthly": 0,
+      "currency": "USD"
+    },
+    "cursor": {
+      "plan": "Free",
+      "monthly": 0,
+      "currency": "USD"
+    }
+  }
+}

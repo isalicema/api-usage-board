@@ -1,0 +1,5 @@
+server/.env
+server/.env.rtf
+server/.cache/
+.DS_Store
+node_modules/
