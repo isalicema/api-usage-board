@@ -19,7 +19,7 @@ Claude Code / Codex / Kimi Code / DeepSeek / OpenRouter / Grok / Cursor / Antigr
 **2. 克隆并启动**：
 
 ```bash
-git clone <你的仓库地址> api-usage-board
+git clone https://github.com/isalicema/api-usage-board.git
 cd api-usage-board
 ./serve.command
 ```
