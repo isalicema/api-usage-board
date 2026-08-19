@@ -6,8 +6,11 @@ Claude Code / Codex / Kimi Code / DeepSeek / OpenRouter / Grok / Cursor / Antigr
 纯前端 vanilla HTML/CSS/JS（ES modules），无构建步骤、无外部依赖、无 CDN；本地 server
 只用 Node 内置模块，零 npm 依赖。数据全部读取你本机已有的 CLI 凭证/日志，**不上传任何数据**。
 
-![Dashboard](shots/dashboard-dark.png)
-![Token 用量](shots/token-dark.png)
+> 产品原型借鉴自[这篇微信文章](https://mp.weixin.qq.com/s/9IQzxijlbDdLiAiS8np5aQ)，
+> 供开发学习和自用。
+
+![Dashboard](shots/dashboard-light.png)
+![Token 用量](shots/token-light.png)
 
 ## 快速开始
 
