@@ -70,4 +70,4 @@ Dashboard 页面 OpenRouter 卡片未配置时会显示「未配置 key → 如�
 
 ## License
 
-MIT（如需修改请自行调整 `LICENSE` 文件）。
+MIT
