@@ -198,8 +198,14 @@ function deriveAlerts() {
     if (ch.kind !== 'windows') continue;
     for (const w of ch.windows) {
       if (w.usedPct == null) continue;
-      if (w.usedPct >= 95) {
+      if (w.usedPct >= 99.5) {
         alerts.push({ level: 'red', text: `${ch.name} ${w.label} 已用尽` });
+      } else if (w.usedPct >= 95) {
+        // 优先线性外推「约 X 后用尽」（悠着点用的核心提示）；烧速不可估时回退剩余百分比
+        const hit = projectedHitSec(w);
+        alerts.push({ level: 'red', text: hit != null
+          ? `${ch.name} ${w.label} 约 ${fmtDuration(hit)} 后用尽`
+          : `${ch.name} ${w.label} 即将用尽（剩 ${Math.round(100 - w.usedPct)}%）` });
       } else {
         const hit = projectedHitSec(w);
         if (hit != null && hit <= 24 * 3600) {
@@ -257,7 +263,8 @@ function renderQuota() {
       chip = el('span', 'q-chip ok', `${ch.name} ${curSym(ch.balance?.currency)}${Math.floor(ch.balance?.amount ?? 0)}`);
     } else {
       const w = worstWindow(ch);
-      if (w.usedPct >= 95) chip = el('span', 'q-chip bad', `${ch.name} 已用尽`);
+      if (w.usedPct >= 99.5) chip = el('span', 'q-chip bad', `${ch.name} 已用尽`);
+      else if (w.usedPct >= 95) chip = el('span', 'q-chip bad', `${ch.name} 仅剩${Math.round(100 - w.usedPct)}%`);
       else if (w.usedPct >= 85) chip = el('span', 'q-chip warn', `${ch.name} 剩${Math.round(100 - w.usedPct)}%`);
       else chip = el('span', 'q-chip ok', `${ch.name} 剩${Math.round(100 - w.usedPct)}%`);
     }
@@ -319,8 +326,15 @@ function renderQuota() {
       let sub, subCls = 'ch-sub';
       if (!w) {
         sub = ch.note || '暂无配额数据';
-      } else if (w.usedPct >= 95) {
+      } else if (w.usedPct >= 99.5) {
         sub = `${w.label} · 已用尽`; subCls += ' danger';
+      } else if (w.usedPct >= 95) {
+        // 优先线性外推「约 X 后用尽」；烧速不可估时回退剩余百分比
+        const hit = projectedHitSec(w);
+        sub = hit != null
+          ? `${w.label} · 即将用尽 · 约 ${fmtDuration(hit)} 后用尽`
+          : `${w.label} · 即将用尽（剩 ${Math.round(100 - w.usedPct)}%）`;
+        subCls += ' danger';
       } else {
         const hit = projectedHitSec(w);
         if (hit != null && hit <= 24 * 3600) { sub = `${w.label} · 约 ${fmtDuration(hit)} 后用尽`; subCls += ' danger'; }
