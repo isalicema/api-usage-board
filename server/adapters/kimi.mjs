@@ -162,6 +162,8 @@ export function createKimiAdapter() {
     id: 'kimi', name: 'Kimi Code', color: '#22d3ee',
     warm() { this.quota().catch(() => {}); rowsCache.warm(); },
     async quota() {
+      // 从未跑过 Kimi Code：目录都不存在 → 不是故障，不进告警横幅
+      if (!fs.existsSync(KIMI_DIR)) return { status: 'unconfigured', kind: 'windows', windows: [], note: '未检测到 Kimi Code 使用记录' };
       // 60s 内直接返上次成功快照（测试模式下不走 TTL，让失败可被构造）
       if (!TEST_MODE && lastGood && Date.now() - lastGood.ts < QUOTA_TTL) {
         return { status: 'online', kind: 'windows', windows: lastGood.data.windows };
@@ -185,6 +187,7 @@ export function createKimiAdapter() {
     },
     async usageRows() { return rowsCache.get(); },
     health() {
+      if (!fs.existsSync(KIMI_DIR)) return { state: 'unconfigured', latencyMs: 0 };
       const state = lastOk ? (Date.now() - lastOk < STALE_MAX ? 'operational' : 'degraded') : 'degraded';
       return { state, latencyMs: Math.round(lastLatency) };
     },

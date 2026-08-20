@@ -47,13 +47,18 @@ async function fetchQuotaFromLS() {
       const now = Date.now();
       const windows = [];
       for (const g of groups) {
+        // 接口按模型分组（Gemini Models / Claude and GPT models），各有独立的 weekly+5h 池。
+        // 平铺时必须带组名，否则 UI 出现两行一样的「7天/5小时」，且 resetDeadlines 键冲突。
+        const tag = /gemini/i.test(g.displayName || '') ? 'Gemini'
+          : /claude|gpt/i.test(g.displayName || '') ? 'Claude/GPT'
+          : (g.displayName || '').split(/\s+/)[0] || 'agy';
         for (const b of g.buckets || []) {
           const weekly = b.window === 'weekly';
           const windowSec = weekly ? 7 * 86400 : 5 * 3600;
           const resetInSec = b.resetTime ? Math.max(0, Math.round((Date.parse(b.resetTime) - now) / 1000)) : null;
           const remaining = Number(b.remainingFraction);
           windows.push({
-            label: weekly ? '7天' : '5小时',
+            label: `${tag} ${weekly ? '7天' : '5小时'}`,
             windowSec,
             usedPct: isFinite(remaining) ? Math.round((1 - remaining) * 1000) / 10 : null, // remaining → 已用
             timePct: resetInSec != null ? Math.min(100, Math.round((1 - resetInSec / windowSec) * 100)) : null,
@@ -71,18 +76,22 @@ async function fetchQuotaFromLS() {
 
 export function createAntigravityAdapter() {
   const gate = staleGate(60_000, SNAPSHOT_MAX_AGE, fetchQuotaFromLS);
+  let lastOk = 0, lastLatency = 0;
 
   return {
     id: 'antigravity', name: 'Antigravity', color: '#fb7185', tokenData: false,
     warm() { gate({}).catch(() => {}); },
     async quota() {
       try {
+        const t0 = Date.now();
         const r = await gate({});
+        lastLatency = Date.now() - t0;
         const base = { kind: 'windows', windows: r.data.windows, source: r.data.source };
         if (r.stale) {
           const h = Math.round(r.ageMs / 3600000);
           return { ...base, status: 'dormant', note: `agy 未运行 · 数据为 ${h < 1 ? '1 小时内' : h + ' 小时前'}采集` };
         }
+        lastOk = Date.now();
         return { ...base, status: 'online' };
       } catch {
         // agy 没在跑是常态，不算异常
@@ -90,6 +99,7 @@ export function createAntigravityAdapter() {
       }
     },
     async usageRows() { return []; },
-    health() { return { state: 'dormant', latencyMs: 0 }; }, // 本地端口探测，延迟无意义
+    // 跟随最近一次 quota 实况：采到 → OPERATIONAL；没采到（agy 未运行/仅旧快照）→ 未运行（灰，非故障）
+    health() { return { state: lastOk ? 'operational' : 'dormant', latencyMs: Math.round(lastLatency) }; },
   };
 }

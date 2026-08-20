@@ -199,6 +199,7 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
   padding: 5px 0;
 }
 .q-label { color: var(--text-dim); font-size: 12px; }
+.ch-block.wide-label .quota-row { grid-template-columns: 104px 1fr 168px; }
 .q-bar {
   position: relative; height: 8px; border-radius: 4px;
   background: var(--q-track); overflow: visible;

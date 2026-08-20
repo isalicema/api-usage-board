@@ -92,6 +92,8 @@ export function createCursorAdapter() {
     id: 'cursor', name: 'Cursor', color: '#818cf8', tokenData: false, // 无 token 序列（本地无干净日志）
     warm() { gate({}).catch(() => {}); },
     async quota() {
+      // 从未跑过 Cursor：本地凭证库都不存在 → 不是故障，不进告警横幅
+      if (!fs.existsSync(VSCDB)) return { status: 'unconfigured', kind: 'windows', windows: [], note: '未检测到 Cursor 使用记录' };
       const t0 = Date.now();
       try {
         const r = await gate({});
@@ -111,6 +113,7 @@ export function createCursorAdapter() {
     },
     async usageRows() { return []; },
     health() {
+      if (!fs.existsSync(VSCDB)) return { state: 'unconfigured', latencyMs: 0 };
       return { state: lastOk ? 'operational' : 'degraded', latencyMs: Math.round(lastLatency) };
     },
   };

@@ -206,7 +206,11 @@ function scan() {
 
 export function createGrokAdapter() {
   const gate = staleGate(60_000, 30 * 60_000, async () => {
-    try { return await fetchDirect(); } catch { return fetchFromLog(); }
+    try { return await fetchDirect(); }
+    catch (e) {
+      // 日志兜底失败时抛出直连的原始错误（401/无凭证），避免真实原因被掩盖
+      try { return fetchFromLog(); } catch { throw e; }
+    }
   });
   const rowsCache = swr(5 * 60_000, async () => scan());
   let lastOk = 0, lastLatency = 0;
@@ -215,19 +219,38 @@ export function createGrokAdapter() {
     id: 'grok', name: 'Grok', color: '#f472b6',
     warm() { gate({}).catch(() => {}); rowsCache.warm(); },
     async quota() {
-      const t0 = Date.now();
-      const r = await gate({});
-      lastLatency = Date.now() - t0; lastOk = Date.now();
-      const base = { kind: 'windows', windows: r.data.windows, source: r.data.source, note: r.data.note };
-      if (r.stale) {
-        const mins = Math.max(1, Math.round(r.ageMs / 60000));
-        return { ...base, status: 'stale', note: `数据为 ${mins} 分钟前 · 查询失败重试中` };
+      // 从未跑过 Grok：目录都不存在 → 不是故障，不进告警横幅
+      if (!fs.existsSync(GROK_DIR)) return { status: 'unconfigured', kind: 'windows', windows: [], note: '未检测到 Grok 使用记录' };
+      try {
+        const t0 = Date.now();
+        const r = await gate({});
+        lastLatency = Date.now() - t0; lastOk = Date.now();
+        const base = { kind: 'windows', windows: r.data.windows, source: r.data.source, note: r.data.note };
+        if (r.stale) {
+          const mins = Math.max(1, Math.round(r.ageMs / 60000));
+          return { ...base, status: 'stale', note: `数据为 ${mins} 分钟前 · 查询失败重试中` };
+        }
+        return { ...base, status: 'online' };
+      } catch (e) {
+        // offline 必须带原因，否则「暂无配额数据」有歧义（未登录？凭证过期？网络问题？）
+        return { status: 'offline', kind: 'windows', windows: [], note: offlineNote(e) };
       }
-      return { ...base, status: 'online' };
     },
     async usageRows() { return rowsCache.get(); },
     health() {
+      if (!fs.existsSync(GROK_DIR)) return { state: 'unconfigured', latencyMs: 0 };
       return { state: lastOk ? 'operational' : 'degraded', latencyMs: Math.round(lastLatency) };
     },
   };
+}
+
+// 把底层错误翻译成可行动的提示（凭证相关优先，网络问题兜底）
+// 注：目录不存在的情况在 quota() 里已提前拦截为 unconfigured，这里只处理「装了但读失败」
+function offlineNote(e) {
+  const msg = e?.message || '';
+  if (msg === 'no grok credentials') return '未登录 grok CLI（无有效凭证），客户端登录后自动采集';
+  const m = msg.match(/HTTP (\d+)/);
+  if (m && (m[1] === '401' || m[1] === '403')) return '凭证已过期，在 grok 客户端重新登录后自动恢复';
+  if (m) return `billing 接口返回 HTTP ${m[1]}，重试中`;
+  return 'billing 接口不可达（网络/超时），重试中';
 }

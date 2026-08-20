@@ -137,12 +137,15 @@ export function createDeepseekAdapter() {
     id: 'deepseek', name: 'DeepSeek', color: '#34d399',
     warm() { quotaCache.warm(); rowsCache.warm(); },
     async quota() {
+      // 从未跑过 DeepSeek：目录都不存在 → 不是故障，不进告警横幅
+      if (!fs.existsSync(path.join(HOME, '.dsh'))) return { status: 'unconfigured', kind: 'balance', balance: null, note: '未检测到 DeepSeek 使用记录' };
       const q = await quotaCache.get();
       lastLatency = q.latencyMs; lastOk = Date.now();
       return { status: 'online', kind: 'balance', balance: { amount: q.amount, currency: q.currency } };
     },
     async usageRows() { return rowsCache.get(); },
     health() {
+      if (!fs.existsSync(path.join(HOME, '.dsh'))) return { state: 'unconfigured', latencyMs: 0 };
       return { state: lastOk ? 'operational' : 'degraded', latencyMs: Math.round(lastLatency) };
     },
   };

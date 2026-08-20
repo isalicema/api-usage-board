@@ -112,7 +112,7 @@ function fmtNum(n) { return n.toLocaleString('en-US'); }
 
 const CUR_SYM = { CNY: '¥', USD: '$' };
 const curSym = (c) => CUR_SYM[c] || (c ? c + ' ' : '');
-const STATUS_LABEL = { online: 'ONLINE', offline: 'OFFLINE', unconfigured: 'NO KEY', stale: 'STALE', dormant: '未运行' };
+const STATUS_LABEL = { online: 'ONLINE', offline: 'OFFLINE', unconfigured: '未使用', stale: 'STALE', dormant: '未运行' };
 const statusLabel = (s) => STATUS_LABEL[s] || String(s || '').toUpperCase();
 
 function barClass(pct) { return pct < 50 ? 'g' : pct <= 85 ? 'o' : 'r'; }
@@ -271,6 +271,8 @@ function renderQuota() {
   state.tickBase = {}; // 时间刻度竖线的锚点：fetch 时的 timePct + 时刻，tickLight 每秒平滑推进
   for (const ch of state.quota.channels) {
     const block = el('div', 'ch-block');
+    // 带组前缀的长标签（如 antigravity 的「Claude/GPT 5小时」）需要更宽的标签列，整卡统一加宽保持条形对齐
+    if ((ch.windows || []).some((w) => w.label && w.label.length > 4)) block.classList.add('wide-label');
 
     const head = el('div', 'ch-head');
     head.appendChild(el('span', 'ch-name', ch.name));
