@@ -221,11 +221,9 @@ function deriveAlerts() {
 function renderClock() {
   const d = new Date();
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
-  const hh = d.getHours();
-  const ap = hh < 6 ? '凌晨' : hh < 12 ? '上午' : hh < 14 ? '中午' : hh < 18 ? '下午' : '晚上';
-  const h = hh % 12 || 12;
+  const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
-  $('#local-time').textContent = `本地 ${ap} ${String(h).padStart(2, '0')}:${mm} ${week}`;
+  $('#local-time').textContent = `本地 ${hh}:${mm} ${week}`; // 24 小时制
 }
 
 function renderAlerts() {
