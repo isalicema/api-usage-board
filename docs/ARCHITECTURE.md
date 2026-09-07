@@ -21,20 +21,25 @@ real-source.js createHttpSource('/api')  ←→  与 MockSource 同接口
 usage-board.js（store + 轮询 + 告警推导 + localStorage 历史 + 渲染）
 ```
 
-前端默认走 HttpSource。`window.__board = { state, refresh, switchTab, setTheme }` 供调试。
+前端默认走 HttpSource。`window.__board = { state, refresh, switchTab, setTheme, setPanelCollapsed, openShare, drawShareCard }` 供调试。
 
 ## 八渠道来源与字段对照
 
 | 渠道 | 配额 | Token 序列 |
 |---|---|---|
-| Claude Code | **官方直连（主）**：`GET https://api.anthropic.com/api/oauth/usage`（需 `anthropic-beta: oauth-2025-04-20` 头；未公开接口，可能漂移）。凭证：env `CLAUDE_CODE_OAUTH_TOKEN` → `~/.claude/.credentials.json` → Keychain（`Claude Code-credentials`，hex 先解码）。**回退**：ccusage blocks/daily 估算。都不通 → offline。不做 token 刷新写回（与 CLI 并发写回有 refresh_token 轮换冲突风险），仅 401 重读凭证重试一次 | **本地增量扫描** `~/.claude/projects/*/*.jsonl`：`type=="assistant"` 记录的 `message.usage`，按 `message.id` 去重，过滤 `model=="<synthetic>"`，cwd 取记录的 `cwd` 字段 |
+| Claude Code | **官方直连（主）**：`GET https://api.anthropic.com/api/oauth/usage`（需 `anthropic-beta: oauth-2025-04-20` 头；未公开接口，可能漂移）。凭证：env `CLAUDE_CODE_OAUTH_TOKEN` → `~/.claude/.credentials.json` → Keychain（`Claude Code-credentials`，hex 先解码）。**回退**：ccusage blocks/daily 估算。都不通 → offline。不做 token 刷新写回（与 CLI 并发写回有 refresh_token 轮换冲突风险），仅 401 重读凭证重试一次 | **本地增量扫描** `~/.claude/projects/*/*.jsonl`：`type=="assistant"` 记录的 `message.usage`，按 `message.id` 去重，过滤 `model=="<synthetic>"`，cwd 取记录的 `cwd` 字段。**可选历史回补**：本地 jsonl 会被 Claude Code 自身的清理策略删掉早期记录；`claude.mjs` 支持从 `server/data/claude-feb-backfill.json`（文件名/路径硬编码，不进 git）合入补充行，标 `bf:1` 免于扫描窗口裁剪，读不到文件时静默跳过；`{ rows: [{date, model, input, output, cacheRead, cacheWrite}] }` 格式，字段含义见文件自带的 `_comment` |
 | Codex | **官方直连（主）**：`GET https://chatgpt.com/backend-api/wham/usage`（headers：`originator: Codex Desktop`、`OAI-Product-Sku: CODEX`）。凭证：`~/.codex/auth.json` 的 `tokens.access_token`。窗口 ≤12h→5小时，否则→7天。**回退**：rollout jsonl 尾部 `rate_limits` | rollout jsonl 的 `token_count` 事件 `payload.info.last_token_usage`（turn 增量；权威量=input−cached+output）；model/cwd 取 `turn_context` 事件 |
-| Kimi Code | `GET https://api.kimi.com/coding/v1/usages`（复数，单数 404）。Bearer 读 `~/.kimi-code/credentials/kimi-code.json`。token 15 分钟过期：401 重读凭证重试一次，失败走 stale | `session_index.jsonl` → `agents/*/wire.jsonl` 里 `usage.record` + `usageScope=="turn"`；cwd 取 session 的 `workDir` |
+| Kimi Code | `GET https://api.kimi.com/coding/v1/usages`（复数，单数 404）。Bearer 读 `~/.kimi-code/credentials/kimi-code.json`。token 15 分钟过期：401 重读凭证重试一次，失败走 stale；offline 必带原因（未安装/未登录/凭证过期，`offlineNote()`） | `session_index.jsonl` → `agents/*/wire.jsonl` 里 `usage.record` + `usageScope=="turn"`；cwd 取 session 的 `workDir` |
 | DeepSeek | `GET https://api.deepseek.com/user/balance`，key 手解 `~/.dsh/.credentials.yaml` | `~/.dsh/sessions/**/session.jsonl.zstd`（`zstd -dc`），`chunk.type=="usage"` |
 | OpenRouter | `GET /api/v1/credits` + `GET /api/v1/auth/key`（key 类型检测）。key 配置：`server/.env` 或环境变量 | **需 management key**（Settings → Management Keys）。序列用 `POST /api/v1/analytics/query`（一次拿 45 天）。花费为真实 USD。无项目维度 |
-| Grok | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`（Bearer = `~/.grok/auth.json`）。**注意**：`creditUsagePercent` 是付费 credit 字段，free 用户恒省略——free 额度信号来自推理 429 报错文本（`subscription:free-usage-exhausted`），从 `unified.jsonl` 尾部解析 | `~/.grok/sessions/*/*/updates.jsonl` 的 `params._meta.totalTokens`，语义是上下文体积快照（非单调），近似口径 |
+| Grok | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`（Bearer = `~/.grok/auth.json`）。**注意**：`creditUsagePercent` 是付费 credit 字段，free 用户恒省略——free 额度信号来自推理 429 报错文本（`subscription:free-usage-exhausted`），从 `unified.jsonl` 尾部解析；offline 同样必带原因 | `~/.grok/sessions/*/*/updates.jsonl` 的 `params._meta.totalTokens`，语义是上下文体积快照（非单调），近似口径 |
 | Cursor | `POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`。凭证：`state.vscdb`（复制到临时目录只读打开）| 无本地干净日志，`tokenData:false`，不进 Token tab |
 | Antigravity | 凭证未定位，机会主义采集：agy 运行时从最新 `cli-*.log` 正则出 language server 端口，POST `RetrieveUserQuotaSummary`。不跑则 `dormant` | 无，`tokenData:false` |
+
+**`unconfigured` vs `offline`**：Kimi/Grok/Cursor/DeepSeek 四个适配器在请求前先判凭证目录
+是否存在——目录都不存在（从没跑过这个工具）直接返 `unconfigured`（灰色，不进告警横幅）；
+目录存在但请求失败才是真的 `offline`（红色，进告警横幅，且必带原因）。两者不能混，
+否则没装的工具会被误报成"服务离线"。
 
 ## 项目维度（GET /api/by-project）
 
@@ -70,10 +75,25 @@ QuotaDot（Claude/Codex 直连的出处）、CodexIsland、aiquokka、llmquota �
 
 ## 主题机制（dark / light）
 
+- 视觉语言为 Aurora（漂移渐变光斑背景 `.aurora` 四团 + 玻璃拟态面板 `backdrop-filter: blur()`），
+  深色=深靛夜空、浅色=淡薰衣草极光，同一套 CSS 变量在两个主题下取不同值
 - 所有随主题变的颜色都是 CSS 变量，`:root` 定义 dark（默认），`[data-theme="light"]` 覆盖浅色一套
 - 切换持久化在 localStorage `aub:theme`，首次访问跟随 `prefers-color-scheme`
 - 首帧防闪烁：`index.html` 内联脚本在 CSS 加载前写 `data-theme`；切主题需重绘 canvas 图表
   （网格/坐标轴色从 CSS 变量读取）
+
+## 一键分享卡
+
+`drawShareCard()`（`usage-board.js`）用 canvas 手绘固定尺寸卡面（2x 输出），不走 DOM 截图——
+玻璃拟态的 `backdrop-filter` 无法被 DOM 序列化捕获，手绘反而像素级可控。内容 = 今日概览四数值
++ 一年热力图 + 渠道图标行 + 版权页脚，配色跟随当前主题（深/浅两套调色板）。`openShare()`
+弹出预览层，提供保存 PNG / 复制剪贴板 / `navigator.share` 系统分享（不支持时按钮自动隐藏）。
+
+## 面板折叠
+
+Token 用量 tab 每个面板可折叠（面板头 chevron 按钮，`.panel-body` 的 grid-rows 动画），
+折叠态持久化在 localStorage `aub:panel-collapsed`，跨会话保持；`setPanelCollapsed(id, bool)`
+展开时会重绘该面板内的 canvas（折叠期间尺寸为 0，重绘前的图表内容不可信）。
 
 ## 验证（probe）
 
@@ -84,6 +104,7 @@ node _probe/shots.mjs
 服务策略：先探测 8177（`serve.command` 常驻端口）——已在跑就复用且跑完不停；8177 空闲才自起
 临时 server（PORT=8179），跑完自动停。
 
-probe 断言覆盖：8 渠道配额真实性、dormant/NO KEY 合法态、by-project 非空+别名归并、cost-summary
-数值合法、模型/项目抽屉展开收起、时间刻度平滑推进、stale 降级、无密钥泄露（页面/console 不出现
+probe 断言覆盖：8 渠道配额真实性、unconfigured/dormant/NO KEY 合法态、by-project 非空+别名归并、
+cost-summary 数值合法、模型/项目抽屉展开收起、时间刻度平滑推进、stale 降级、面板折叠持久化、
+分享卡绘制（像素断言）、里程碑数值非占位、无密钥泄露（页面/console 不出现
 `sk-`/`sk-or-`/`sk-ant-`/`eyJ` 前缀）、canvas 已绘制、控制台无报错。
