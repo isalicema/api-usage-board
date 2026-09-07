@@ -3,3 +3,4 @@ server/.env.rtf
 server/.cache/
 .DS_Store
 node_modules/
+server/data/

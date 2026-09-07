@@ -16,6 +16,8 @@
 <link rel="stylesheet" href="usage-board.css">
 </head>
 <body>
+<!-- Aurora 极光背景层（玻璃面板的质感来源；fixed 铺满，内容层 z-index 在上） -->
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
 <div class="page">
 
   <!-- 顶部导航 -->
@@ -24,10 +26,15 @@
     <button class="tab-btn" data-tab="token">Token 用量</button>
   </nav>
   <div class="title-row">
-    <h1>Multi-AI Usage Monitor</h1>
+    <h1>Multi-AI Usage <span class="hl">Monitor</span></h1>
     <div class="title-right">
       <span class="mock-pill" id="mock-pill" hidden>MOCK 数据</span>
       <div class="local-time" id="local-time"></div>
+      <button class="theme-toggle" id="share-btn" title="一键分享：生成今日概览 + 每日用量分享卡" aria-label="生成分享卡">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>
+        </svg>
+      </button>
       <button class="theme-toggle" id="theme-toggle" title="切换深色/浅色" aria-label="切换深色/浅色">
         <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <circle cx="12" cy="12" r="4"/>
@@ -63,81 +70,141 @@
   <section id="tab-token" hidden>
     <div class="sync-row" id="sync-row"></div>
 
-    <div class="panel">
-      <div class="panel-head"><h2>今日概览</h2><span class="panel-sub" id="today-date"></span></div>
-      <div class="overview-cards">
-        <div class="ov-card">
-          <div class="ov-num" id="ov-total">—</div>
-          <div class="ov-label">今日总处理 Token</div>
-          <div class="ov-sub" id="ov-total-breakdown"></div>
-          <div class="ov-sub dim" id="ov-total-ref"></div>
-        </div>
-        <div class="ov-card">
-          <div class="ov-num" id="ov-auth">—</div>
-          <div class="ov-label">今日权威 Token</div>
-          <div class="ov-sub" id="ov-auth-breakdown"></div>
-          <div class="ov-sub dim">不含 cache</div>
+    <div class="panel" data-panel="today">
+      <div class="panel-head">
+        <h2>今日概览</h2>
+        <div class="panel-head-right">
+          <span class="panel-sub" id="today-date"></span>
+          <button class="panel-toggle" data-target="today" title="收起 / 展开" aria-label="收起 / 展开面板"><span class="chev">›</span></button>
         </div>
       </div>
+      <div class="panel-body"><div class="panel-body-inner">
+        <div class="overview-cards">
+          <div class="ov-card">
+            <div class="ov-num" id="ov-total">—</div>
+            <div class="ov-label">今日总处理 Token</div>
+            <div class="ov-sub" id="ov-total-breakdown"></div>
+            <div class="ov-sub dim" id="ov-total-ref"></div>
+          </div>
+          <div class="ov-card">
+            <div class="ov-num" id="ov-auth">—</div>
+            <div class="ov-label">今日权威 Token</div>
+            <div class="ov-sub" id="ov-auth-breakdown"></div>
+            <div class="ov-sub dim">不含 cache</div>
+          </div>
+          <div class="ov-card">
+            <div class="ov-num" id="ms-total">—</div>
+            <div class="ov-label">累计 Token（历史总计）</div>
+            <div class="ov-sub" id="ms-total-sub"></div>
+            <div class="ov-sub dim">本地扫描覆盖范围内 · 含 cache</div>
+          </div>
+          <div class="ov-card">
+            <div class="ov-num" id="ms-peak">—</div>
+            <div class="ov-label">单日峰值 Token</div>
+            <div class="ov-sub" id="ms-peak-sub"></div>
+            <div class="ov-sub dim">含 cache</div>
+          </div>
+        </div>
+      </div></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-head"><h2>每日用量</h2><span class="panel-sub">含 cache · 最近一年 · hover 看明细 · 虚线 = 未来周</span></div>
-      <div class="hm-wrap"><div class="hm" id="heatmap"></div></div>
+    <div class="panel" data-panel="heatmap">
+      <div class="panel-head">
+        <h2>每日用量</h2>
+        <div class="panel-head-right">
+          <span class="panel-sub">含 cache · 最近一年 · hover 看明细 · 虚线 = 未来周</span>
+          <button class="panel-toggle" data-target="heatmap" title="收起 / 展开" aria-label="收起 / 展开面板"><span class="chev">›</span></button>
+        </div>
+      </div>
+      <div class="panel-body"><div class="panel-body-inner">
+        <div class="hm-wrap"><div class="hm" id="heatmap"></div></div>
+      </div></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" data-panel="trend">
       <div class="panel-head">
         <h2>趋势与分布</h2>
-        <div class="trend-controls">
-          <div class="range-pills" id="range-pills">
-            <button data-range="today">今日</button>
-            <button data-range="yesterday">昨日</button>
-            <button data-range="3">近3日</button>
-            <button data-range="7">近7日</button>
-            <button data-range="30" class="active">近30日</button>
+        <div class="panel-head-right">
+          <div class="trend-controls">
+            <div class="range-pills" id="range-pills">
+              <button data-range="today">今日</button>
+              <button data-range="yesterday">昨日</button>
+              <button data-range="3">近3日</button>
+              <button data-range="7">近7日</button>
+              <button data-range="30" class="active">近30日</button>
+            </div>
+            <select id="metric-select">
+              <option value="total">口径：总处理量（含 cache）</option>
+              <option value="auth">口径：权威量（不含 cache）</option>
+            </select>
           </div>
-          <select id="metric-select">
-            <option value="total">口径：总处理量（含 cache）</option>
-            <option value="auth">口径：权威量（不含 cache）</option>
-          </select>
+          <button class="panel-toggle" data-target="trend" title="收起 / 展开" aria-label="收起 / 展开面板"><span class="chev">›</span></button>
         </div>
       </div>
-      <div class="chart-legend" id="chart-legend"></div>
-      <div class="chart-wrap"><canvas id="trend-canvas"></canvas></div>
-      <div class="chart-summary" id="chart-summary"></div>
+      <div class="panel-body"><div class="panel-body-inner">
+        <div class="chart-legend" id="chart-legend"></div>
+        <div class="chart-wrap"><canvas id="trend-canvas"></canvas></div>
+        <div class="chart-summary" id="chart-summary"></div>
+      </div></div>
     </div>
 
     <div class="panel-duo">
-      <div class="panel">
-        <div class="panel-head"><h2>Coding Agent</h2></div>
-        <div id="agent-bars"></div>
+      <div class="panel" data-panel="agent">
+        <div class="panel-head">
+          <h2>Coding Agent</h2>
+          <div class="panel-head-right">
+            <button class="panel-toggle" data-target="agent" title="收起 / 展开" aria-label="收起 / 展开面板"><span class="chev">›</span></button>
+          </div>
+        </div>
+        <div class="panel-body"><div class="panel-body-inner">
+          <div id="agent-bars"></div>
+        </div></div>
       </div>
-      <div class="panel">
-        <div class="panel-head"><h2>模型</h2></div>
-        <div id="model-bars"></div>
+      <div class="panel" data-panel="model">
+        <div class="panel-head">
+          <h2>模型</h2>
+          <div class="panel-head-right">
+            <button class="panel-toggle" data-target="model" title="收起 / 展开" aria-label="收起 / 展开面板"><span class="chev">›</span></button>
+          </div>
+        </div>
+        <div class="panel-body"><div class="panel-body-inner">
+          <div id="model-bars"></div>
+        </div></div>
       </div>
     </div>
 
-    <div class="panel">
+    <div class="panel" data-panel="project">
       <div class="panel-head">
         <h2>项目</h2>
-        <span class="panel-sub">按工作目录聚合 · OpenRouter 服务端无项目维度，未计入</span>
+        <div class="panel-head-right">
+          <span class="panel-sub">按工作目录聚合 · OpenRouter 服务端无项目维度，未计入</span>
+          <button class="panel-toggle" data-target="project" title="收起 / 展开" aria-label="收起 / 展开面板"><span class="chev">›</span></button>
+        </div>
       </div>
-      <div id="project-bars"></div>
+      <div class="panel-body"><div class="panel-body-inner">
+        <div id="project-bars"></div>
+      </div></div>
     </div>
 
-    <div class="panel" id="cost-panel" hidden>
+    <div class="panel" id="cost-panel" data-panel="cost" hidden>
       <div class="panel-head">
         <h2>费用预估与套餐回报</h2>
-        <span class="panel-sub" id="cost-summary-line"></span>
+        <div class="panel-head-right">
+          <span class="panel-sub" id="cost-summary-line"></span>
+          <button class="panel-toggle" data-target="cost" title="收起 / 展开" aria-label="收起 / 展开面板"><span class="chev">›</span></button>
+        </div>
       </div>
-      <div id="cost-rows"></div>
-      <div class="cost-note" id="cost-note">按官方刊例价估算 · 价格表与套餐金额见 server/config.json</div>
+      <div class="panel-body"><div class="panel-body-inner">
+        <div id="cost-rows"></div>
+        <div class="cost-note" id="cost-note">按官方刊例价估算 · 价格表与套餐金额见 server/config.json</div>
+      </div></div>
     </div>
   </section>
 
 </div>
+<footer class="site-footer">
+  © 2026 <a href="https://machiwhale.com" target="_blank" rel="noopener">machiwhale studio</a>
+</footer>
 <div id="aub-tooltip" class="aub-tip" hidden></div>
 <script type="module" src="usage-board.js"></script>
 </body>

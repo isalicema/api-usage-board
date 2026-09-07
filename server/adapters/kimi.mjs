@@ -174,7 +174,7 @@ export function createKimiAdapter() {
         lastLatency = q.latencyMs; lastOk = Date.now();
         return { status: 'online', kind: 'windows', windows: q.windows };
       } catch (e) {
-        // 失败降级：有 30 分钟内的成功快照 → stale（保留旧数据 + 副标提示），否则 offline
+        // 失败降级：有 30 分钟内的成功快照 → stale（保留旧数据 + 副标提示），否则 offline（必带原因 note）
         if (lastGood && Date.now() - lastGood.ts < STALE_MAX) {
           const mins = Math.max(1, Math.round((Date.now() - lastGood.ts) / 60000));
           return {
@@ -182,7 +182,7 @@ export function createKimiAdapter() {
             note: `数据为 ${mins} 分钟前 · 查询失败重试中`,
           };
         }
-        throw e; // server 兜底为 offline
+        return { status: 'offline', kind: 'windows', windows: [], note: offlineNote(e) };
       }
     },
     async usageRows() { return rowsCache.get(); },
@@ -192,4 +192,17 @@ export function createKimiAdapter() {
       return { state, latencyMs: Math.round(lastLatency) };
     },
   };
+}
+
+// 把底层错误翻译成可行动的提示。最常见：access_token 仅 15 分钟有效（expires_in=900，
+// 2026-08-20 实测），CLI 不运行就没人刷新——401 是「CLI 闲置过久」的常态，不是故障。
+// 注：目录不存在的情况在 quota() 里已提前拦截为 unconfigured，这里只处理「装了但读失败」
+function offlineNote(e) {
+  const msg = e?.message || '';
+  if (msg === 'no kimi credentials') return '未登录 Kimi Code（无有效凭证），CLI 登录后自动恢复';
+  const m = msg.match(/HTTP (\d+)/);
+  if (m && m[1] === '401') return '登录态已过期（token 15 分钟有效），打开一次 Kimi Code 即自动刷新';
+  if (m && m[1] === '403') return '凭证被拒（403），在 Kimi Code 重新登录后自动恢复';
+  if (m) return `配额接口返回 HTTP ${m[1]}，重试中`;
+  return '配额接口不可达（网络/超时），重试中';
 }

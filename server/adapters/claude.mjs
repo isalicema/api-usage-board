@@ -104,6 +104,17 @@ const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const SCAN_CACHE_FILE = fileURLToPath(new URL('../.cache/claude-scan.json', import.meta.url));
 const SCAN_DAYS = 95; // 覆盖热力图 84 天 + 余量
 
+// 历史回补：server/data/claude-feb-backfill.json（来源 ~/.claude/stats-cache.json，
+// 2 月 jsonl 已被 Claude Code 历史清理删掉，统计缓存是唯一幸存来源，详见文件内 _comment）。
+// 回补行标 bf:1，永不随 SCAN_DAYS 窗口裁剪。
+const BACKFILL_FILE = fileURLToPath(new URL('../data/claude-feb-backfill.json', import.meta.url));
+function loadBackfillRows() {
+  try {
+    const j = JSON.parse(fs.readFileSync(BACKFILL_FILE, 'utf8'));
+    return Array.isArray(j.rows) ? j.rows : [];
+  } catch { return []; }
+}
+
 function loadLocalScan() {
   try {
     const c = JSON.parse(fs.readFileSync(SCAN_CACHE_FILE, 'utf8'));
@@ -168,7 +179,11 @@ function scanLocal() {
     r.seenIds = [...seen];
     r.size = f.size;
   }
-  for (const k of Object.keys(cache.rows)) if (cache.rows[k].date < keepAfter) delete cache.rows[k];
+  // 合入历史回补行（幂等：同键覆盖），并保护其不被窗口裁剪
+  for (const r of loadBackfillRows()) {
+    cache.rows[`${r.date}|${r.model}|`] = { date: r.date, model: r.model, cwd: null, input: r.input, output: r.output, cacheRead: r.cacheRead, cacheWrite: r.cacheWrite, bf: 1 };
+  }
+  for (const k of Object.keys(cache.rows)) if (cache.rows[k].date < keepAfter && !cache.rows[k].bf) delete cache.rows[k];
   for (const p of Object.keys(cache.files)) if (!files.some((f) => f.path === p)) delete cache.files[p];
   saveLocalScan(cache);
   return Object.values(cache.rows);

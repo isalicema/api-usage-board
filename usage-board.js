@@ -112,8 +112,55 @@ function fmtNum(n) { return n.toLocaleString('en-US'); }
 
 const CUR_SYM = { CNY: '¥', USD: '$' };
 const curSym = (c) => CUR_SYM[c] || (c ? c + ' ' : '');
-const STATUS_LABEL = { online: 'ONLINE', offline: 'OFFLINE', unconfigured: '未使用', stale: 'STALE', dormant: '未运行' };
+const STATUS_LABEL = { online: 'ONLINE', offline: 'OFFLINE', unconfigured: 'NO KEY', stale: 'STALE', dormant: '未运行' };
 const statusLabel = (s) => STATUS_LABEL[s] || String(s || '').toUpperCase();
+
+// ============ 渠道图标（内联 SVG 手绘字形 + 品牌色 tile，无外部资源） ============
+// c 为品牌色；null = 跟随文字墨色（grok/cursor 本身是黑白标）。svg 内 currentColor 取色。
+const CH_ICONS = {
+  claude: { c: '#d97757', svg: '<g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3.5v4.6M12 15.9v4.6M3.5 12h4.6M15.9 12h4.6M6 6l3.3 3.3M14.7 14.7 18 18M18 6l-3.3 3.3M9.3 14.7 6 18"/></g>' },
+  codex: { c: '#10a37f', svg: '<g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.5 10 12l-5.5 5.5"/><path d="M13 17.5h6.5"/></g>' },
+  kimi: { c: '#7c6cff', svg: '<path fill="currentColor" d="M20.2 13.6A8.2 8.2 0 1 1 10.4 3.8a6.6 6.6 0 0 0 9.8 9.8z"/>' },
+  deepseek: { c: '#4d6bfe', svg: '<path fill="currentColor" d="M3.2 14.2c0-1.4.4-2.7 1.2-3.8C5.6 8.4 8 6.5 11.4 6.5c2.9 0 5.3 1.3 6.6 3.4l2.6-2c.1 3-.8 5-2.4 6.3-1.6 1.8-4 2.9-6.9 2.9-4 0-8.1-1.3-8.1-2.9z"/><path fill="currentColor" d="M9.2 5.2c.2-1.2 1-2 2-2.3-.1 1.1-.6 1.9-1.4 2.4l-.6-.1z"/><path fill="currentColor" d="M12.2 4.6c.5-1 1.4-1.6 2.5-1.7-.3 1-1 1.8-2 2.1l-.5-.4z"/>' },
+  openrouter: { c: '#8b93f5', svg: '<g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></g>' },
+  grok: { c: null, svg: '<path fill="currentColor" d="M4.5 5h3.4l4.1 5.6L16.1 5h3.4l-5.7 7.6 6.2 6.9h-3.4l-4.6-6.2-4.6 6.2H4l6.2-8.3z"/>' },
+  cursor: { c: null, svg: '<path fill="currentColor" d="M5.5 3.2 19.5 11l-6.5 1.4 2.6 6.4-2.7 1.1-2.6-6.4-4.8 3.3z"/>' },
+  antigravity: { c: '#8ab4f8', svg: '<path fill="currentColor" d="M12 2.8l2.3 6.9 6.9 2.3-6.9 2.3L12 21.2l-2.3-6.9-6.9-2.3 6.9-2.3z"/>' },
+};
+const chIconColor = (id, light) => CH_ICONS[id]?.c || (light ? '#1c2033' : '#e8eaf4');
+
+function chIcon(id) {
+  const ic = CH_ICONS[id];
+  if (!ic) return null;
+  const s = el('span', 'ch-ic');
+  if (ic.c) s.style.setProperty('--ch-c', ic.c);
+  else s.classList.add('ink'); // 黑白标：跟随文字墨色（随主题）
+  s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ic.svg}</svg>`;
+  return s;
+}
+
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+// canvas 用：SVG 字形烘焙成位图（按颜色缓存；onload/onerror 即可，decode 对 data URL 非必需）
+const _iconImgCache = new Map();
+function loadIconImage(id, light) {
+  if (!CH_ICONS[id]) return Promise.resolve(null);
+  const color = chIconColor(id, light);
+  const key = `${id}|${color}`;
+  if (_iconImgCache.has(key)) return _iconImgCache.get(key);
+  const p = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="48" height="48" color="${color}">${CH_ICONS[id].svg}</svg>`);
+  });
+  _iconImgCache.set(key, p);
+  return p;
+}
 
 function barClass(pct) { return pct < 50 ? 'g' : pct <= 85 ? 'o' : 'r'; }
 
@@ -128,6 +175,28 @@ function projectedHitSec(w) {
   const hit = (100 - w.usedPct) / rate;
   const remaining = ((100 - w.timePct) / 100) * w.windowSec;
   return hit <= remaining ? hit : null;
+}
+
+// ============ 面板折叠（Token tab，跨会话保持） ============
+const PANEL_STATE_KEY = 'aub:panel-collapsed';
+function loadPanelState() {
+  try { return JSON.parse(localStorage.getItem(PANEL_STATE_KEY) || '{}'); } catch { return {}; }
+}
+const panelCollapsed = loadPanelState();
+
+function setPanelCollapsed(id, collapsed) {
+  if (collapsed) panelCollapsed[id] = true; else delete panelCollapsed[id];
+  localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(panelCollapsed));
+  const p = document.querySelector(`.panel[data-panel="${id}"]`);
+  if (p) p.classList.toggle('collapsed', collapsed);
+  // 展开时重绘 canvas（收起期间 grid 行高压为 0，chartGeom 可能失真）
+  if (!collapsed && state.token) drawChart();
+}
+
+function applyPanelStates() {
+  document.querySelectorAll('#tab-token .panel[data-panel]').forEach((p) => {
+    p.classList.toggle('collapsed', !!panelCollapsed[p.dataset.panel]);
+  });
 }
 
 // ============ localStorage 历史 ============
@@ -261,7 +330,9 @@ function renderQuota() {
       chip = el('span', 'q-chip ok', `${ch.name} ${curSym(ch.balance?.currency)}${Math.floor(ch.balance?.amount ?? 0)}`);
     } else {
       const w = worstWindow(ch);
-      if (w.usedPct >= 99.5) chip = el('span', 'q-chip bad', `${ch.name} 已用尽`);
+      // 窗口制但暂无可量化窗口（如 grok free 档 usedPct=null）——worstWindow 返回 null，必须兜底
+      if (!w) chip = el('span', 'q-chip', `${ch.name} 暂缺数据`);
+      else if (w.usedPct >= 99.5) chip = el('span', 'q-chip bad', `${ch.name} 已用尽`);
       else if (w.usedPct >= 95) chip = el('span', 'q-chip bad', `${ch.name} 仅剩${Math.round(100 - w.usedPct)}%`);
       else if (w.usedPct >= 85) chip = el('span', 'q-chip warn', `${ch.name} 剩${Math.round(100 - w.usedPct)}%`);
       else chip = el('span', 'q-chip ok', `${ch.name} 剩${Math.round(100 - w.usedPct)}%`);
@@ -280,7 +351,11 @@ function renderQuota() {
     if ((ch.windows || []).some((w) => w.label && w.label.length > 4)) block.classList.add('wide-label');
 
     const head = el('div', 'ch-head');
-    head.appendChild(el('span', 'ch-name', ch.name));
+    const nameEl = el('span', 'ch-name');
+    const ic = chIcon(ch.id);
+    if (ic) nameEl.appendChild(ic);
+    nameEl.appendChild(document.createTextNode(ch.name));
+    head.appendChild(nameEl);
     const right = el('span', 'ch-right');
     const last = el('span', 'ch-last js-rel', `上次查询 ${relTime(state.fetchedAt)}`);
     last.dataset.ts = state.fetchedAt;
@@ -292,25 +367,7 @@ function renderQuota() {
     if (ch.kind === 'balance') {
       // 余额制（DeepSeek / OpenRouter）；note 如「未配置 key」，extra 如 key 维度用量
       const subText = ch.note ? `余额制 · ${ch.note}` : '余额制 · 按量计费';
-      const subRow = el('div', 'ch-sub' + (ch.status === 'unconfigured' ? ' warn' : ''));
-      subRow.appendChild(document.createTextNode(subText));
-      if (ch.status === 'unconfigured' && ch.id === 'openrouter') {
-        // 点一下告诉用户具体去哪拿 key、填在哪，别让「未配置」变成一个死胡同
-        const help = el('span', 'ch-help-link', ' → 如何获取 key');
-        help.style.cursor = 'pointer';
-        help.style.textDecoration = 'underline';
-        subRow.appendChild(help);
-        const detail = el('div', 'ch-help-detail');
-        detail.hidden = true;
-        detail.innerHTML = '1. 打开 <a href="https://openrouter.ai/settings/provisioning-keys" target="_blank" rel="noopener">openrouter.ai/settings/provisioning-keys</a>，创建一个 Management Key（只读，选 Provisioning 类型即可，不用给推理权限）<br>' +
-          '2. 复制 <code>server/.env.example</code> 为 <code>server/.env</code>，把 key 填进 <code>OPENROUTER_MANAGEMENT_KEY=</code> 后面<br>' +
-          '3. 保存文件，配置是热加载的，不用重启 server，下一轮轮询就会生效';
-        help.addEventListener('click', () => { detail.hidden = !detail.hidden; });
-        block.appendChild(subRow);
-        block.appendChild(detail);
-      } else {
-        block.appendChild(subRow);
-      }
+      block.appendChild(el('div', 'ch-sub' + (ch.status === 'unconfigured' ? ' warn' : ''), subText));
       if (ch.balance) {
         const line = el('div', 'balance-line');
         line.appendChild(el('span', 'cur', `余额 ${curSym(ch.balance.currency)}`));
@@ -392,7 +449,11 @@ function renderApiStatus() {
   if (!state.apiStatus) return;
   for (const ch of state.apiStatus.channels) {
     const row = el('div', 'api-row');
-    row.appendChild(el('span', 'api-name', ch.name));
+    const nameEl = el('span', 'api-name');
+    const ic = chIcon(ch.id);
+    if (ic) nameEl.appendChild(ic);
+    nameEl.appendChild(document.createTextNode(ch.name));
+    row.appendChild(nameEl);
     const label = ch.state === 'operational' ? 'OPERATIONAL' : statusLabel(ch.state);
     row.appendChild(el('span', `pill ${ch.state}`, label));
     if (ch.state !== 'unconfigured') row.appendChild(el('span', 'api-latency', `${ch.latencyMs} ms`));
@@ -456,6 +517,39 @@ function renderOverview() {
   $('#ov-total-ref').textContent = `昨日 ${fmtTokens(t.yesterdayTotal)} · 近 7 日均 ${fmtTokens(t.weekAvg)}`;
   $('#ov-auth').textContent = fmtTokens(t.auth);
   $('#ov-auth-breakdown').textContent = `input ${fmtTokens(b.input)} + output ${fmtTokens(b.output)}`;
+}
+
+// 概览数值字号自适应：默认 30px，单卡装不下（scrollWidth 超 clientWidth）才单独降 24px
+function fitOverviewNums() {
+  document.querySelectorAll('.ov-num').forEach((n) => {
+    n.classList.remove('num-sm');
+    if (n.clientWidth && n.scrollWidth > n.clientWidth + 1) n.classList.add('num-sm');
+  });
+}
+
+// 里程碑统计（今日概览两卡 + 分享卡共用）：从一年热力图序列推导
+// （固定含 cache 口径，覆盖范围 = 本地扫描窗口，超窗历史不在内——卡上已注明）
+function computeMilestone(hm) {
+  const daily = hm.dates.map((_, i) => hm.channels.reduce((s, c) => s + c.daily[i], 0));
+  const total = daily.reduce((s, v) => s + v, 0);
+  let peak = 0, peakDate = null, activeDays = 0, firstDate = null;
+  daily.forEach((v, i) => {
+    if (v > 0) { activeDays++; if (!firstDate) firstDate = hm.dates[i]; }
+    if (v > peak) { peak = v; peakDate = hm.dates[i]; }
+  });
+  return { total, peak, peakDate, activeDays, firstDate };
+}
+
+function renderMilestone() {
+  const hm = state.heatmap;
+  if (!hm || !hm.dates?.length) return; // 保留占位「—」
+  const ms = computeMilestone(hm);
+  $('#ms-total').textContent = fmtTokens(ms.total);
+  $('#ms-total-sub').textContent = ms.firstDate ? `${ms.firstDate} 起 · ${ms.activeDays} 天有记录` : '暂无记录';
+  $('#ms-peak').textContent = fmtTokens(ms.peak);
+  $('#ms-peak-sub').textContent = ms.peakDate && ms.total > 0
+    ? `${ms.peakDate} · 占累计 ${(ms.peak / ms.total * 100).toFixed(1)}%`
+    : '—';
 }
 
 function renderLegend() {
@@ -616,7 +710,9 @@ function renderHbars(rootSel, rows, colorOf, base = null) {
     const wrap = el('div', 'hbar-row');
     if (r.title) wrap.title = r.title;
     const head = el('div', 'hbar-head');
-    const nameEl = el('span', 'hbar-name', r.name);
+    const nameEl = el('span', 'hbar-name');
+    if (r.iconId) { const ic = chIcon(r.iconId); if (ic) nameEl.appendChild(ic); } // 渠道图标（Coding Agent 面板）
+    nameEl.appendChild(document.createTextNode(r.name));
     if (r.tag) nameEl.appendChild(el('span', 'hbar-tag', r.tag)); // 如「已合并 2 个目录」
     head.appendChild(nameEl);
     const val = el('span', 'hbar-val');
@@ -678,7 +774,7 @@ function renderBarsWithDrawer(rootSel, rows, drawerOpen, onToggle) {
 function renderDuoPanels() {
   const d = state.token;
   $('#agent-bars').innerHTML = '';
-  renderHbars('#agent-bars', d.channels.map((c) => ({ name: c.name, tokens: c.total, id: c.id })),
+  renderHbars('#agent-bars', d.channels.map((c) => ({ name: c.name, tokens: c.total, id: c.id, iconId: c.id })),
     (r) => d.channels.find((c) => c.id === r.id).color);
 
   // 模型面板
@@ -726,7 +822,11 @@ function renderCostPanel() {
   root.innerHTML = '';
   for (const c of cs.channels) {
     const row = el('div', 'cost-row');
-    row.appendChild(el('span', 'cost-name', c.name));
+    const nameEl = el('span', 'cost-name');
+    const ic = chIcon(c.id);
+    if (ic) nameEl.appendChild(ic);
+    nameEl.appendChild(document.createTextNode(c.name));
+    row.appendChild(nameEl);
 
     const equiv = el('span', 'cost-equiv');
     const val = c.actualUSD != null ? c.actualUSD : c.equivUSD;
@@ -794,6 +894,261 @@ function renderCostPanel() {
   }
 }
 
+// ============ 一键分享：手绘分享卡（canvas 直出 PNG，无外部依赖） ============
+// 卡面跟随页面主题（dark=深靛夜空 / light=淡薰衣草极光），内容 = 今日概览四数值 + 一年热力图 + 版权页脚。
+const SHARE_FF = '"Avenir Next","Avenir",system-ui,"PingFang SC",sans-serif';
+const shareFileName = () => `multi-ai-usage-${todayKey()}.png`;
+
+async function drawShareCard() {
+  const t = state.token.today;
+  const hm = state.heatmap;
+  const ms = computeMilestone(hm);
+  const b = t.breakdown;
+  const FF = SHARE_FF;
+
+  // 卡面跟随页面主题：dark=深靛夜空 / light=淡薰衣草（与页面极光同色系）
+  const light = currentTheme() === 'light';
+  const P = light ? {
+    bg: '#f2f3fa', bgFade: 'rgba(242,243,250,0)',
+    blobs: ['rgba(165,178,255,.72)', 'rgba(214,196,255,.66)', 'rgba(255,215,239,.60)', 'rgba(233,255,176,.60)'],
+    ink: '#1c2033', dim: '#6b7280', label: '#454c6e',
+    cardFill: 'rgba(255,255,255,.62)', cardBorder: 'rgba(30,34,80,.10)',
+    hmTrack: 'rgba(30,34,80,.07)', hmCell: (a) => `rgba(76,93,245,${a})`, hmFuture: 'rgba(30,34,80,.28)',
+  } : {
+    bg: '#0b0e1a', bgFade: 'rgba(11,14,26,0)',
+    blobs: ['rgba(64,76,190,.50)', 'rgba(96,64,170,.42)', 'rgba(150,60,120,.34)', 'rgba(120,140,40,.28)'],
+    ink: '#f2f4fb', dim: '#9aa1b8', label: '#c5cbe0',
+    cardFill: 'rgba(255,255,255,.055)', cardBorder: 'rgba(255,255,255,.10)',
+    hmTrack: 'rgba(255,255,255,.07)', hmCell: (a) => `rgba(114,128,255,${a})`, hmFuture: 'rgba(255,255,255,.20)',
+  };
+
+  const SCALE = 2; // 2x 输出，社媒高清
+  const W = 1200, PAD = 64, CW = W - PAD * 2;
+  const COLS = HM_WEEKS + HM_FUTURE_COLS, ROWS = 7, GAP = 4;
+  const CELL = Math.floor((CW - (COLS - 1) * GAP) / COLS);
+  const gridW = COLS * CELL + (COLS - 1) * GAP;
+  const gridH = ROWS * CELL + (ROWS - 1) * GAP;
+  const gridX = PAD + (CW - gridW) / 2;
+
+  const yTitle = PAD;
+  const yCards = yTitle + 84; // 标题行 + 渠道图标行
+  const CARD_H = 138;
+  const yHmLabel = yCards + CARD_H + 48;
+  const yGrid = yHmLabel + 34;
+  const yMonth = yGrid + gridH + 12;
+  const yFoot = yMonth + 56;
+  const H = yFoot + 40;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W * SCALE; canvas.height = H * SCALE;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(SCALE, SCALE);
+  const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); };
+
+  // 底 + 极光团（独立卡面，alpha 比页面背景强一档）
+  ctx.fillStyle = P.bg;
+  ctx.fillRect(0, 0, W, H);
+  const blob = (x, y, r, c) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, c); g.addColorStop(1, P.bgFade);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  };
+  blob(W * 0.10, H * 0.02, W * 0.40, P.blobs[0]);
+  blob(W * 0.96, H * 0.28, W * 0.34, P.blobs[1]);
+  blob(W * 0.30, H * 1.02, W * 0.38, P.blobs[2]);
+  blob(W * 0.92, H * 1.0, W * 0.26, P.blobs[3]);
+
+  // 标题：Multi-AI Usage + 酸橙色块 Monitor（微倾，与页头同款标记；色块两主题一致）
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.font = `700 34px ${FF}`;
+  ctx.fillStyle = P.ink;
+  const pre = 'Multi-AI Usage ';
+  ctx.fillText(pre, PAD, yTitle + 26);
+  const preW = ctx.measureText(pre).width;
+  const monW = ctx.measureText('Monitor').width;
+  ctx.save();
+  ctx.translate(PAD + preW + 6, yTitle + 28);
+  ctx.rotate(-0.021);
+  ctx.fillStyle = '#d7f34f';
+  rr(-7, -27, monW + 14, 38, 6); ctx.fill();
+  ctx.fillStyle = '#1c2033';
+  ctx.fillText('Monitor', 0, 0);
+  ctx.restore();
+
+  // 右上：渠道图标行（在线/同步正常 = 点亮；offline/未配置/未运行 = 压暗）+ 下方日期
+  const quotaChs = state.quota?.channels || [];
+  const iconOrder = quotaChs.length ? quotaChs.map((c) => c.id) : Object.keys(CH_ICONS);
+  const activeIds = new Set(quotaChs.length
+    ? quotaChs.filter((c) => c.status === 'online' || c.status === 'stale').map((c) => c.id)
+    : hm.channels.map((c) => c.id));
+  const iconImgs = await Promise.all(iconOrder.map((id) => loadIconImage(id, light)));
+  const T = 34, tGap = 8;
+  const ix0 = W - PAD - (iconOrder.length * T + (iconOrder.length - 1) * tGap);
+  iconOrder.forEach((id, i) => {
+    if (!CH_ICONS[id]) return;
+    const x = ix0 + i * (T + tGap), y = yTitle - 4;
+    const col = chIconColor(id, light);
+    ctx.save();
+    ctx.globalAlpha = activeIds.has(id) ? 1 : 0.28; // 未激活压暗
+    ctx.fillStyle = hexA(col, 0.14);
+    rr(x, y, T, T, 9); ctx.fill();
+    if (iconImgs[i]) ctx.drawImage(iconImgs[i], x + 6, y + 6, 22, 22);
+    ctx.restore();
+  });
+  ctx.font = `500 15px ${FF}`;
+  ctx.fillStyle = P.dim;
+  ctx.textAlign = 'right';
+  ctx.fillText(`${t.date} · 今日`, W - PAD, yTitle + 60);
+  ctx.textAlign = 'left';
+
+  // 今日概览四数值卡
+  const cards = [
+    { num: fmtTokens(t.total), label: '今日总处理 Token',
+      sub: `input ${fmtTokens(b.input)} + output ${fmtTokens(b.output)}`,
+      dim: `cache read ${fmtTokens(b.cacheRead)} + write ${fmtTokens(b.cacheWrite)}` },
+    { num: fmtTokens(t.auth), label: '今日权威 Token',
+      sub: `昨日 ${fmtTokens(t.yesterdayTotal)} · 近 7 日均 ${fmtTokens(t.weekAvg)}`, dim: '不含 cache' },
+    { num: fmtTokens(ms.total), label: '累计 Token（历史总计）',
+      sub: `${ms.firstDate} 起 · ${ms.activeDays} 天有记录`, dim: '含 cache' },
+    { num: fmtTokens(ms.peak), label: '单日峰值 Token',
+      sub: `${ms.peakDate} · 占累计 ${ms.total > 0 ? (ms.peak / ms.total * 100).toFixed(1) : 0}%`, dim: '含 cache' },
+  ];
+  const cGap = 14, cW = (CW - 3 * cGap) / 4;
+  cards.forEach((c, i) => {
+    const x = PAD + i * (cW + cGap);
+    ctx.fillStyle = P.cardFill;
+    ctx.strokeStyle = P.cardBorder;
+    ctx.lineWidth = 1;
+    rr(x, yCards, cW, CARD_H, 14); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = P.ink;
+    ctx.font = `700 36px ${FF}`;
+    ctx.fillText(c.num, x + 22, yCards + 52);
+    ctx.fillStyle = P.label;
+    ctx.font = `600 14px ${FF}`;
+    ctx.fillText(c.label, x + 22, yCards + 78);
+    ctx.fillStyle = P.dim;
+    ctx.font = `400 12px ${FF}`;
+    ctx.fillText(c.sub, x + 22, yCards + 100);
+    ctx.fillText(c.dim, x + 22, yCards + 119);
+  });
+
+  // 一年热力图（与页面同口径：sqrt 六档、周一起始、未来列虚线）
+  ctx.fillStyle = P.label;
+  ctx.font = `600 15px ${FF}`;
+  ctx.fillText('每日用量 · 最近一年 · 含 cache', PAD, yHmLabel + 12);
+
+  const totals = {};
+  hm.dates.forEach((d, i) => { totals[d] = hm.channels.reduce((s, c) => s + c.daily[i], 0); });
+  const max = Math.max(1, ...Object.values(totals));
+  const LV_ALPHA = [0, 0.12, 0.28, 0.48, 0.70, 1.0];
+  const levelOf = (v) => (v <= 0 ? 0 : 1 + Math.min(LV_ALPHA.length - 2, Math.floor(Math.sqrt(v / max) * (LV_ALPHA.length - 1))));
+
+  const todayD = new Date(); todayD.setHours(0, 0, 0, 0);
+  const thisMonday = new Date(todayD);
+  thisMonday.setDate(thisMonday.getDate() - ((thisMonday.getDay() + 6) % 7));
+  const start = new Date(thisMonday);
+  start.setDate(start.getDate() - (HM_WEEKS - 1) * 7);
+  const dateStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  let prevMonth = null;
+  for (let ci = 0; ci < COLS; ci++) {
+    const monday = new Date(start); monday.setDate(monday.getDate() + ci * 7);
+    const isFuture = monday > thisMonday;
+    for (let dow = 0; dow < ROWS; dow++) {
+      const d = new Date(monday); d.setDate(d.getDate() + dow);
+      const x = gridX + ci * (CELL + GAP), y = yGrid + dow * (CELL + GAP);
+      if (isFuture || d > todayD) {
+        rr(x, y, CELL, CELL, 3);
+        ctx.strokeStyle = P.hmFuture;
+        ctx.setLineDash([3, 3]); ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
+      } else {
+        rr(x, y, CELL, CELL, 3);
+        ctx.fillStyle = P.hmTrack; ctx.fill();
+        const lv = levelOf(totals[dateStr(d)] || 0);
+        if (lv > 0) {
+          rr(x, y, CELL, CELL, 3);
+          ctx.fillStyle = P.hmCell(LV_ALPHA[lv]); ctx.fill();
+        }
+      }
+    }
+    const mon = monday.getMonth() + 1;
+    if (mon !== prevMonth) {
+      ctx.fillStyle = P.dim;
+      ctx.font = `400 11px ${FF}`;
+      ctx.fillText(`${mon}月`, gridX + ci * (CELL + GAP), yMonth + 10);
+    }
+    prevMonth = mon;
+  }
+
+  // 页脚：版权 + 统计区间
+  ctx.font = `400 13px ${FF}`;
+  ctx.fillStyle = P.dim;
+  ctx.fillText('© 2026 machiwhale studio · machiwhale.com', PAD, yFoot);
+  ctx.textAlign = 'right';
+  ctx.fillText(`统计区间 ${ms.firstDate || '—'} ~ ${t.date}`, W - PAD, yFoot);
+
+  return canvas;
+}
+
+// 分享弹层：预览 + 保存 PNG / 复制图片 / 系统分享（支持文件分享时才出现）
+function buildShareOverlay() {
+  const ov = el('div'); ov.id = 'share-overlay'; ov.hidden = true;
+  const box = el('div', 'share-box');
+  const img = el('img', 'share-img');
+  img.alt = 'Multi-AI Usage 分享卡';
+  box.appendChild(img);
+  const actions = el('div', 'share-actions');
+  const closeBtn = el('button', 'share-btn', '关闭');
+  const copyBtn = el('button', 'share-btn', '复制图片');
+  const shareBtn = el('button', 'share-btn', '系统分享…');
+  shareBtn.hidden = true;
+  shareBtn.dataset.act = 'share';
+  const saveBtn = el('button', 'share-btn primary', '保存 PNG');
+  actions.append(closeBtn, copyBtn, shareBtn, saveBtn);
+  box.appendChild(actions);
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+
+  const close = () => { ov.hidden = true; };
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !ov.hidden) close(); });
+  closeBtn.addEventListener('click', close);
+  saveBtn.addEventListener('click', () => ov._canvas.toBlob((blob) => {
+    const a = el('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = shareFileName();
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }, 'image/png'));
+  copyBtn.addEventListener('click', () => ov._canvas.toBlob(async (blob) => {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      copyBtn.textContent = '已复制';
+    } catch { copyBtn.textContent = '复制失败'; }
+    setTimeout(() => { copyBtn.textContent = '复制图片'; }, 1600);
+  }, 'image/png'));
+  shareBtn.addEventListener('click', async () => {
+    try { await navigator.share({ files: [ov._file], title: 'Multi-AI Usage Monitor' }); }
+    catch { /* 用户取消 */ }
+  });
+  return ov;
+}
+
+async function openShare() {
+  if (!state.token || !state.heatmap) return;
+  const canvas = await drawShareCard();
+  const ov = $('#share-overlay') || buildShareOverlay();
+  ov._canvas = canvas;
+  ov.querySelector('.share-img').src = canvas.toDataURL('image/png');
+  canvas.toBlob((blob) => {
+    const f = new File([blob], shareFileName(), { type: 'image/png' });
+    ov._file = f;
+    const btn = ov.querySelector('[data-act="share"]');
+    btn.hidden = !(navigator.canShare && navigator.canShare({ files: [f] }));
+  }, 'image/png');
+  ov.hidden = false;
+}
+
 // ============ 轻量每秒刷新：相对时间 + 重置倒计时 ============
 function tickLight() {
   renderClock();
@@ -826,6 +1181,8 @@ function renderAll() {
   if (state.token) {
     renderSyncRow();
     renderOverview();
+    renderMilestone();
+    fitOverviewNums();
     renderHeatmap();
     renderLegend();
     drawChart();
@@ -889,8 +1246,9 @@ function switchTab(tab) {
   $('#tab-dashboard').hidden = tab !== 'dashboard';
   $('#tab-token').hidden = tab !== 'token';
   if (tab === 'token' && state.token) {
-    // tab 从 hidden 恢复后 canvas 需要按新尺寸重绘
+    // tab 从 hidden 恢复后 canvas 需要按新尺寸重绘；概览字号也要在可见状态下重测
     drawChart();
+    fitOverviewNums();
   }
 }
 
@@ -909,8 +1267,17 @@ $('#metric-select').addEventListener('change', async (e) => {
   await refresh();
 });
 $('#theme-toggle').addEventListener('click', toggleTheme);
+$('#share-btn').addEventListener('click', openShare);
+// 面板折叠（事件委托，Token tab 所有带 data-panel 的面板）
+$('#tab-token').addEventListener('click', (e) => {
+  const btn = e.target.closest('.panel-toggle');
+  if (!btn) return;
+  const id = btn.dataset.target;
+  setPanelCollapsed(id, !panelCollapsed[id]);
+});
+applyPanelStates(); // 恢复上次会话的折叠态
 window.addEventListener('resize', () => {
-  if (state.token && state.tab === 'token') { drawChart(); renderHeatmap(); } // 格子尺寸随面板宽度重算
+  if (state.token && state.tab === 'token') { drawChart(); renderHeatmap(); fitOverviewNums(); } // 格子尺寸随面板宽度重算
 });
 window.addEventListener('scroll', hideTip, { passive: true });
 
@@ -951,7 +1318,7 @@ $('#heatmap').addEventListener('mouseover', (e) => {
 $('#heatmap').addEventListener('mouseleave', hideTip);
 
 // probe 钩子
-window.__board = { state, refresh, switchTab, setTheme };
+window.__board = { state, refresh, switchTab, setTheme, setPanelCollapsed, openShare, drawShareCard };
 
 // 启动：探测本地 server 的真实接口，失败回退 MockSource 并显示「MOCK 数据」pill。
 // 回退不是终态：mock 模式下每 15s 重试真实源，成功即切回并摘 pill。

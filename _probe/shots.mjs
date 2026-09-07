@@ -88,10 +88,13 @@ try {
   );
   check(!!orOk, `OpenRouter 渠道存在且状态合法（status=${orq?.status}${orq?.note ? '，' + orq.note : ''}${orq?.balance ? '，余额 $' + orq.balance.amount : ''}）`);
 
-  // Grok：online（direct/log）或 stale，必须有窗口
+  // Grok：online（direct/log）/ stale 必须有窗口；offline 必须带原因 note（凭证过期/未安装等）
   const gq = byId.grok;
-  check(gq && ['online', 'stale'].includes(gq.status) && (gq.windows || []).length > 0,
-    `Grok 渠道在线（status=${gq?.status} source=${gq?.source} ${(gq?.windows || []).map((w) => w.label + ':' + w.usedPct + '%').join(' ')}）`);
+  check(gq && (
+    (['online', 'stale'].includes(gq.status) && (gq.windows || []).length > 0) ||
+    (gq.status === 'offline' && !!gq.note)
+  ),
+    `Grok 渠道状态合法（status=${gq?.status} source=${gq?.source || '—'} ${(gq?.windows || []).map((w) => w.label + ':' + w.usedPct + '%').join(' ')}${gq?.note ? '，' + gq.note : ''}）`);
 
   // Cursor：online（月账期窗口）或凭证过期 offline（带指引副标）
   const cq = byId.cursor;
@@ -110,7 +113,7 @@ try {
   check(!seriesIds.includes('cursor') && !seriesIds.includes('antigravity') && seriesIds.includes('grok'),
     `tokenData:false 渠道不进 Token tab（序列渠道：${seriesIds.join('/')}）`);
 
-  // 按项目聚合（不依赖具体项目名，跑在任何人的机器上都成立）
+  // 按项目聚合
   const byProj = await apiJson(port, '/api/by-project?days=30&metric=total');
   check(byProj.length > 0,
     `/api/by-project 非空（top3：${byProj.slice(0, 3).map((p) => `${p.project} ${(p.tokens / 1e8).toFixed(1)}亿`).join(' / ')}）`);
@@ -213,14 +216,53 @@ try {
   const drawerClosed = await page.evaluate(() => !document.querySelector('.model-drawer.open'));
   check(drawerClosed, '抽屉收起恢复');
 
+  // —— 里程碑面板：累计与峰值非占位，副标含日期 ——
+  const ms = await page.evaluate(() => ({
+    total: document.querySelector('#ms-total').textContent,
+    totalSub: document.querySelector('#ms-total-sub').textContent,
+    peak: document.querySelector('#ms-peak').textContent,
+    peakSub: document.querySelector('#ms-peak-sub').textContent,
+  }));
+  check(/亿|万/.test(ms.total) && /\d{4}-\d{2}-\d{2} 起/.test(ms.totalSub),
+    `里程碑累计（${ms.total}，${ms.totalSub}）`);
+  check(/亿|万/.test(ms.peak) && /\d{4}-\d{2}-\d{2}/.test(ms.peakSub),
+    `里程碑单日峰值（${ms.peak}，${ms.peakSub}）`);
+
+  // —— 面板折叠：每日用量收起 → 热力图高度 0 + localStorage 持久化；展开恢复 ——
+  await page.evaluate(() => document.querySelector('.panel-toggle[data-target="heatmap"]').click());
+  await page.waitForTimeout(400); // 等 grid-rows 过渡
+  const col1 = await page.evaluate(() => ({
+    collapsed: document.querySelector('.panel[data-panel="heatmap"]').classList.contains('collapsed'),
+    // 折叠裁的是 .panel-body（grid 行高 →0），子元素 #heatmap 自身高度不变
+    bodyH: document.querySelector('.panel[data-panel="heatmap"] .panel-body').getBoundingClientRect().height,
+    saved: JSON.parse(localStorage.getItem('aub:panel-collapsed') || '{}').heatmap === true,
+  }));
+  check(col1.collapsed && col1.bodyH === 0 && col1.saved,
+    `每日用量面板折叠（body 高度 ${col1.bodyH}，持久化=${col1.saved}）`);
+  await shot('tab2-dark-collapsed.png');
+  await page.evaluate(() => document.querySelector('.panel-toggle[data-target="heatmap"]').click());
+  await page.waitForTimeout(400);
+  const col2 = await page.evaluate(() => ({
+    collapsed: document.querySelector('.panel[data-panel="heatmap"]').classList.contains('collapsed'),
+    bodyH: document.querySelector('.panel[data-panel="heatmap"] .panel-body').getBoundingClientRect().height,
+    saved: 'heatmap' in JSON.parse(localStorage.getItem('aub:panel-collapsed') || '{}'),
+  }));
+  check(!col2.collapsed && col2.bodyH > 100 && !col2.saved,
+    `每日用量面板展开恢复（body 高度 ${col2.bodyH}，持久化已清除=${!col2.saved}）`);
+
   // —— hover 浮标：柱状图（dark）+ 热力图（light）——
+  // 里程碑面板把趋势图推到首屏以下，先把 canvas 滚进视口再算命中坐标
   const barPos = await page.evaluate(() => {
+    const c = document.querySelector('#trend-canvas');
+    c.scrollIntoView({ block: 'center' });
     const g = window.__board.state.chartGeom;
-    const r = document.querySelector('#trend-canvas').getBoundingClientRect();
+    const r = c.getBoundingClientRect();
     const b = g.bars[Math.floor(g.bars.length / 2)];
     return { x: r.left + b.x + b.w / 2, y: r.top + g.padT + g.plotH / 2 };
   });
   await page.mouse.move(barPos.x, barPos.y);
+  await page.waitForTimeout(250); // 等 scrollIntoView 的异步 scroll 事件（会 hideTip）先落完
+  await page.mouse.move(barPos.x + 1, barPos.y); // canvas 是 mousemove，挪 1px 即可重触发
   await page.waitForTimeout(150);
   const tip1 = await page.evaluate(() => {
     const t = document.querySelector('#aub-tooltip');
@@ -235,9 +277,13 @@ try {
   const cellPos = await page.evaluate(() => {
     const cells = [...document.querySelectorAll('.hm-cell[data-tokens]')].filter((c) => +c.dataset.tokens > 0);
     const c = cells[cells.length - 1];
+    c.scrollIntoView({ block: 'center' });
     const r = c.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
+  await page.mouse.move(cellPos.x, cellPos.y);
+  await page.waitForTimeout(250); // 等 scrollIntoView 的异步 scroll 事件（会 hideTip）先落完
+  await page.mouse.move(cellPos.x, cellPos.y - 12); // 移出再移回，重新触发 mouseover
   await page.mouse.move(cellPos.x, cellPos.y);
   await page.waitForTimeout(150);
   const tip2 = await page.evaluate(() => {
@@ -255,6 +301,7 @@ try {
     emptyCellPos: (() => {
       const c = document.querySelector('.hm-cell[data-tokens="0"]');
       if (!c) return null;
+      c.scrollIntoView({ block: 'center' });
       const r = c.getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     })(),
@@ -279,6 +326,43 @@ try {
     check(/无数据/.test(tipEmpty), `空格 hover 显示「无数据」（${tipEmpty.split('\n')[0]}）`);
   }
   await page.evaluate(() => window.__board.setTheme('dark'));
+
+  // —— 一键分享卡：canvas 直出 PNG（亮色像素断言）+ 弹层打开/关闭 + 导出原图目检 ——
+  const share = await page.evaluate(async () => {
+    const c = await window.__board.drawShareCard();
+    const x = c.getContext('2d');
+    const d = x.getImageData(0, 0, c.width, c.height).data;
+    let bright = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > 180 && d[i + 1] > 180 && d[i + 2] > 180) bright++;
+    }
+    return { w: c.width, h: c.height, bright, dataURL: c.toDataURL('image/png') };
+  });
+  check(share.bright > 2000, `分享卡已绘制（${share.w}×${share.h}，亮色像素 ${share.bright}）`);
+  fs.writeFileSync(shotsDir + 'share-card.png', Buffer.from(share.dataURL.split(',')[1], 'base64'));
+  console.log('✓ 分享卡原图 → shots/share-card.png');
+  // 卡面跟随主题：浅色模式再出一张（淡薰衣草极光）
+  const shareLight = await page.evaluate(async () => {
+    window.__board.setTheme('light');
+    const c = await window.__board.drawShareCard();
+    const u = c.toDataURL('image/png');
+    window.__board.setTheme('dark');
+    return u;
+  });
+  fs.writeFileSync(shotsDir + 'share-card-light.png', Buffer.from(shareLight.split(',')[1], 'base64'));
+  console.log('✓ 分享卡原图（浅色）→ shots/share-card-light.png');
+  await page.evaluate(() => window.__board.openShare());
+  await page.waitForTimeout(300);
+  const shareUi = await page.evaluate(() => ({
+    open: !document.querySelector('#share-overlay').hidden,
+    btns: [...document.querySelectorAll('#share-overlay .share-btn')].map((b) => b.textContent),
+  }));
+  check(shareUi.open && shareUi.btns.includes('保存 PNG') && shareUi.btns.includes('复制图片'),
+    `分享弹层打开（按钮：${shareUi.btns.join('/')}）`);
+  await shot('tab2-dark-share.png', { fullPage: false });
+  await page.evaluate(() => document.querySelector('#share-overlay .share-btn').click());
+  await page.waitForTimeout(200);
+  check(await page.evaluate(() => document.querySelector('#share-overlay').hidden), '分享弹层关闭');
 
   // 页面渲染真实数据：无 MOCK pill，DeepSeek 余额 ≠ mock 值
   const pageInfo = await page.evaluate(() => ({

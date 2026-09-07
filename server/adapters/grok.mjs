@@ -232,7 +232,7 @@ export function createGrokAdapter() {
         }
         return { ...base, status: 'online' };
       } catch (e) {
-        // offline 必须带原因，否则「暂无配额数据」有歧义（未登录？凭证过期？网络问题？）
+        // offline 必须带原因，否则「暂无配额数据」有歧义（未安装？未登录？凭证过期？）
         return { status: 'offline', kind: 'windows', windows: [], note: offlineNote(e) };
       }
     },
