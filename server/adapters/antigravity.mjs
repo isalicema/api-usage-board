@@ -97,7 +97,29 @@ function parseVarint(buf, pos) {
   return [val, pos];
 }
 
+function extractUsage(chunk) {
+  let pos = 0, input = 0, output = 0, cacheRead = 0, found = false;
+  while (pos < chunk.length) {
+    const [key, np] = parseVarint(chunk, pos); pos = np;
+    const fnum = key >> 3, wire = key & 7;
+    if (wire === 0) {
+      const [val, n] = parseVarint(chunk, pos); pos = n;
+      if (fnum === 1) { input = val; found = true; }
+      else if (fnum === 3) { output = val; found = true; }
+      else if (fnum === 5) { cacheRead = val; found = true; }
+    } else if (wire === 2) {
+      const [len, n] = parseVarint(chunk, pos); pos = n;
+      pos += len;
+    } else break;
+  }
+  if (found && (input > 0 || output > 0 || cacheRead > 0)) {
+    return { input, output, cacheRead };
+  }
+  return null;
+}
+
 // 逆向自 gen_metadata protobuf: field 1 (Response) -> field 4 (Usage) -> field 1 (in), field 3 (out), field 5 (cache)
+// 具备多路径容错（field 4 优先，子消息变体兜底），非模型生成事件或全零记录直接返 null
 function parseTokensFromProto(buf) {
   let pos = 0, f1 = null;
   while (pos < buf.length) {
@@ -112,7 +134,9 @@ function parseTokensFromProto(buf) {
   }
   if (!f1) return null;
 
-  pos = 0; let f4 = null;
+  // 1. 优先从标准 field 4 (Usage) 提取
+  pos = 0;
+  const subChunks = [];
   while (pos < f1.length) {
     const [key, np] = parseVarint(f1, pos); pos = np;
     const fnum = key >> 3, wire = key & 7;
@@ -120,26 +144,31 @@ function parseTokensFromProto(buf) {
     else if (wire === 2) {
       const [len, n] = parseVarint(f1, pos); pos = n;
       const val = f1.subarray(pos, pos + len); pos += len;
-      if (fnum === 4) f4 = val;
+      if (fnum === 4) {
+        const u = extractUsage(val);
+        if (u) return u;
+      }
+      subChunks.push(val);
     } else break;
   }
-  if (!f4) return null;
 
-  pos = 0; let input = 0, output = 0, cacheRead = 0;
-  while (pos < f4.length) {
-    const [key, np] = parseVarint(f4, pos); pos = np;
-    const fnum = key >> 3, wire = key & 7;
-    if (wire === 0) {
-      const [val, n] = parseVarint(f4, pos); pos = n;
-      if (fnum === 1) input = val;
-      else if (fnum === 3) output = val;
-      else if (fnum === 5) cacheRead = val;
-    } else if (wire === 2) {
-      const [len, n] = parseVarint(f4, pos); pos = n;
-      pos += len;
-    } else break;
+  // 2. 兜底扫描其他嵌套子消息（如 field 17 等变体消息结构）
+  for (const chunk of subChunks) {
+    let p = 0;
+    while (p < chunk.length) {
+      const [key, np] = parseVarint(chunk, p); p = np;
+      const wire = key & 7;
+      if (wire === 0) { const [, n] = parseVarint(chunk, p); p = n; }
+      else if (wire === 2) {
+        const [len, n] = parseVarint(chunk, p); p = n;
+        const sub = chunk.subarray(p, p + len); p += len;
+        const u = extractUsage(sub);
+        if (u) return u;
+      } else break;
+    }
   }
-  return { input, output, cacheRead };
+
+  return null;
 }
 
 async function readDbEntries(dbPath) {
@@ -257,12 +286,13 @@ async function scan() {
 
     for (const e of entries) {
       const tok = parseTokensFromProto(e.data);
-      if (!tok) continue;
+      // 过滤非生成事件及无 token 消耗的空记录（避免统计空转与假默认值污染）
+      if (!tok || (tok.input + tok.output + tok.cacheRead === 0)) continue;
       const date = stepDates.get(e.idx) || fallbackDate;
       if (date < keepAfter) continue;
 
-      const m = e.data.toString('latin1').match(/(gemini-[\w\.\-]+|claude-[\w\.\-]+|gpt-[\w\.\-]+)/);
-      const model = m ? m[1] : 'gemini';
+      const m = e.data.toString('latin1').match(/(gemini-[\w\.\-]+|claude-[\w\.\-]+|gpt-[\w\.\-]+|chatgpt-[\w\.\-]+|o1-[\w\.\-]+|o3-[\w\.\-]+)/i);
+      const model = m ? m[1].toLowerCase() : 'gemini';
       const key = `${date}|${model}|${cwd || ''}`;
       const row = rowsMap[key] || (rowsMap[key] = {
         date, model, cwd: cwd || null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
