@@ -62,14 +62,14 @@ async function apiStatus() {
 }
 
 // 估值单价（$/M tokens，粗略均值；订阅渠道仅作参考，非订阅账单）
-const PRICE_PER_M = { claude: 4.5, codex: 2.8, kimi: 0.9, deepseek: 0.4, grok: 1.5 };
+const PRICE_PER_M = { claude: 4.5, codex: 2.8, kimi: 0.9, deepseek: 0.4, grok: 1.5, antigravity: 0.5 };
 
 function localDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 async function apiTokenSeries({ days, endOffset, metric }) {
-  // tokenData:false 的渠道（Cursor / Antigravity，无本地 token 序列）不进趋势/分布
+  // tokenData:false 的渠道（Cursor，无本地 token 序列）不进趋势/分布
   const seriesAdapters = adapters.filter((a) => a.tokenData !== false);
   const rowsByChannel = await Promise.all(seriesAdapters.map((a) => guard(() => a.usageRows(), [], 60_000)));
 
