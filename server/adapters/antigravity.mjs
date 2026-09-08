@@ -97,6 +97,10 @@ function parseVarint(buf, pos) {
   return [val, pos];
 }
 
+// 单步 Token 物理合理性上限：Gemini 上下文窗口最多 2M，单 turn 设 5M 足够留出安全裕度，
+// 同时可绝对防御误读子消息中的纳秒/秒级时间戳、整数 ID 等大数值（如 1786700152）。
+const MAX_TOKENS_PER_STEP = 5_000_000;
+
 function extractUsage(chunk) {
   let pos = 0, input = 0, output = 0, cacheRead = 0, found = false;
   while (pos < chunk.length) {
@@ -104,6 +108,7 @@ function extractUsage(chunk) {
     const fnum = key >> 3, wire = key & 7;
     if (wire === 0) {
       const [val, n] = parseVarint(chunk, pos); pos = n;
+      if (val > MAX_TOKENS_PER_STEP) return null; // 防御异常大数
       if (fnum === 1) { input = val; found = true; }
       else if (fnum === 3) { output = val; found = true; }
       else if (fnum === 5) { cacheRead = val; found = true; }
@@ -112,14 +117,21 @@ function extractUsage(chunk) {
       pos += len;
     } else break;
   }
-  if (found && (input > 0 || output > 0 || cacheRead > 0)) {
-    return { input, output, cacheRead };
+  if (!found || (input + output + cacheRead === 0)) return null;
+  if (input > MAX_TOKENS_PER_STEP || output > MAX_TOKENS_PER_STEP || cacheRead > MAX_TOKENS_PER_STEP) {
+    return null;
   }
-  return null;
+  return { input, output, cacheRead };
 }
 
-// 逆向自 gen_metadata protobuf: field 1 (Response) -> field 4 (Usage) -> field 1 (in), field 3 (out), field 5 (cache)
-// 具备多路径容错（field 4 优先，子消息变体兜底），非模型生成事件或全零记录直接返 null
+// 严格对齐 Google Gemini 原生 Protobuf 规范：
+// 顶层 field 1: GenerateContentResponse
+// GenerateContentResponse.usage_metadata 严格为 field 4
+// UsageMetadata:
+//   field 1: prompt_token_count (input)
+//   field 3: candidates_token_count (output)
+//   field 5: cached_content_token_count (cacheRead)
+// 严禁对其他子消息盲猜字段号；非模型生成事件（如工具调用、元事件）没有 field 4，直接返 null。
 function parseTokensFromProto(buf) {
   let pos = 0, f1 = null;
   while (pos < buf.length) {
@@ -134,9 +146,7 @@ function parseTokensFromProto(buf) {
   }
   if (!f1) return null;
 
-  // 1. 优先从标准 field 4 (Usage) 提取
   pos = 0;
-  const subChunks = [];
   while (pos < f1.length) {
     const [key, np] = parseVarint(f1, pos); pos = np;
     const fnum = key >> 3, wire = key & 7;
@@ -145,27 +155,9 @@ function parseTokensFromProto(buf) {
       const [len, n] = parseVarint(f1, pos); pos = n;
       const val = f1.subarray(pos, pos + len); pos += len;
       if (fnum === 4) {
-        const u = extractUsage(val);
-        if (u) return u;
+        return extractUsage(val);
       }
-      subChunks.push(val);
     } else break;
-  }
-
-  // 2. 兜底扫描其他嵌套子消息（如 field 17 等变体消息结构）
-  for (const chunk of subChunks) {
-    let p = 0;
-    while (p < chunk.length) {
-      const [key, np] = parseVarint(chunk, p); p = np;
-      const wire = key & 7;
-      if (wire === 0) { const [, n] = parseVarint(chunk, p); p = n; }
-      else if (wire === 2) {
-        const [len, n] = parseVarint(chunk, p); p = n;
-        const sub = chunk.subarray(p, p + len); p += len;
-        const u = extractUsage(sub);
-        if (u) return u;
-      } else break;
-    }
   }
 
   return null;
