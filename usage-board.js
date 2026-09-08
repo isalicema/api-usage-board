@@ -312,11 +312,18 @@ function worstWindow(ch) {
   return valid.reduce((a, b) => (b.usedPct > a.usedPct ? b : a));
 }
 
+let showUnconfigured = localStorage.getItem('aub:show-unconfigured') === '1';
+
 function renderQuota() {
+  if (!state.quota) return;
+  const allChannels = state.quota.channels || [];
+  const configuredChannels = allChannels.filter((ch) => ch.status !== 'unconfigured');
+  const channelsToShow = showUnconfigured ? allChannels : configuredChannels;
+
   // 顶部汇总 chips
   const chips = $('#quota-chips');
   chips.innerHTML = '';
-  for (const ch of state.quota.channels) {
+  for (const ch of channelsToShow) {
     let chip;
     if (ch.status === 'offline') {
       chip = el('span', 'q-chip bad', `${ch.name} OFFLINE`);
@@ -332,10 +339,13 @@ function renderQuota() {
       const w = worstWindow(ch);
       // 窗口制但暂无可量化窗口（如 grok free 档 usedPct=null）——worstWindow 返回 null，必须兜底
       if (!w) chip = el('span', 'q-chip', `${ch.name} 暂缺数据`);
-      else if (w.usedPct >= 99.5) chip = el('span', 'q-chip bad', `${ch.name} 已用尽`);
-      else if (w.usedPct >= 95) chip = el('span', 'q-chip bad', `${ch.name} 仅剩${Math.round(100 - w.usedPct)}%`);
-      else if (w.usedPct >= 85) chip = el('span', 'q-chip warn', `${ch.name} 剩${Math.round(100 - w.usedPct)}%`);
-      else chip = el('span', 'q-chip ok', `${ch.name} 剩${Math.round(100 - w.usedPct)}%`);
+      else {
+        const rem = Math.max(0, Math.round((100 - w.usedPct) * 10) / 10);
+        if (w.usedPct >= 99.5) chip = el('span', 'q-chip bad', `${ch.name} 已用尽`);
+        else if (w.usedPct >= 95) chip = el('span', 'q-chip bad', `${ch.name} 仅剩${rem}% · 已用${w.usedPct}%`);
+        else if (w.usedPct >= 85) chip = el('span', 'q-chip warn', `${ch.name} 剩${rem}% · 已用${w.usedPct}%`);
+        else chip = el('span', 'q-chip ok', `${ch.name} 剩${rem}% · 已用${w.usedPct}%`);
+      }
     }
     chips.appendChild(chip);
   }
@@ -345,7 +355,7 @@ function renderQuota() {
   root.innerHTML = '';
   state.resetDeadlines = {};
   state.tickBase = {}; // 时间刻度竖线的锚点：fetch 时的 timePct + 时刻，tickLight 每秒平滑推进
-  for (const ch of state.quota.channels) {
+  for (const ch of channelsToShow) {
     const block = el('div', 'ch-block');
     // 带组前缀的长标签（如 antigravity 的「Claude/GPT 5小时」）需要更宽的标签列，整卡统一加宽保持条形对齐
     if ((ch.windows || []).some((w) => w.label && w.label.length > 4)) block.classList.add('wide-label');
@@ -408,10 +418,12 @@ function renderQuota() {
           continue;
         }
         const cls = barClass(win.usedPct);
+        const remPct = Math.max(0, Math.round((100 - win.usedPct) * 10) / 10);
         const row = el('div', 'quota-row');
         row.appendChild(el('span', 'q-label', win.label));
 
         const bar = el('div', 'q-bar');
+        bar.title = `已用 ${win.usedPct}%（剩余 ${remPct}%）${win.timePct != null ? ` · 时间走过 ${win.timePct}%` : ''}`;
         const fill = el('div', `q-fill ${cls}`);
         fill.style.width = `${Math.min(100, win.usedPct)}%`;
         bar.appendChild(fill);
@@ -427,7 +439,10 @@ function renderQuota() {
         row.appendChild(bar);
 
         const meta = el('div', 'q-meta');
-        meta.appendChild(el('span', `q-pct ${cls}`, `${win.usedPct}%`));
+        const pctWrap = el('span', 'q-pct-wrap');
+        pctWrap.appendChild(el('span', `q-pct ${cls}`, `已用 ${win.usedPct}%`));
+        pctWrap.appendChild(el('span', 'q-rem', `· 剩 ${remPct}%`));
+        meta.appendChild(pctWrap);
         if (win.resetInSec != null) {
           const key = `${ch.id}:${win.label}`;
           state.resetDeadlines[key] = Date.now() + win.resetInSec * 1000;
@@ -441,13 +456,37 @@ function renderQuota() {
     }
     root.appendChild(block);
   }
+
+  // 若存在未检测到使用记录/未配置的渠道，提供折叠展开入口
+  const unconfiguredChannels = allChannels.filter((ch) => ch.status === 'unconfigured');
+  if (unconfiguredChannels.length > 0) {
+    const unconfBar = el('div', 'unconfigured-toggle-row');
+    const unconfBtn = el('button', 'unconfigured-toggle-btn');
+    unconfBtn.type = 'button';
+    unconfBtn.textContent = showUnconfigured
+      ? '▴ 收起未安装/未配置渠道'
+      : `▾ 查看未安装/未配置渠道 (${unconfiguredChannels.length})`;
+    unconfBtn.title = 'Kimi / DeepSeek / OpenRouter / Cursor 等未在本地检测到凭证的渠道';
+    unconfBtn.addEventListener('click', () => {
+      showUnconfigured = !showUnconfigured;
+      localStorage.setItem('aub:show-unconfigured', showUnconfigured ? '1' : '0');
+      renderQuota();
+      renderApiStatus();
+    });
+    unconfBar.appendChild(unconfBtn);
+    root.appendChild(unconfBar);
+  }
 }
 
 function renderApiStatus() {
   const root = $('#api-status-rows');
   root.innerHTML = '';
   if (!state.apiStatus) return;
-  for (const ch of state.apiStatus.channels) {
+  const allChannels = state.apiStatus.channels || [];
+  const channelsToShow = showUnconfigured
+    ? allChannels
+    : allChannels.filter((ch) => ch.state !== 'unconfigured');
+  for (const ch of channelsToShow) {
     const row = el('div', 'api-row');
     const nameEl = el('span', 'api-name');
     const ic = chIcon(ch.id);

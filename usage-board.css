@@ -273,12 +273,12 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
 
 .quota-row {
   display: grid;
-  grid-template-columns: 52px 1fr 168px;
+  grid-template-columns: 52px 1fr 216px;
   align-items: center; gap: 14px;
   padding: 5px 0;
 }
 .q-label { color: var(--text-dim); font-size: 12px; }
-.ch-block.wide-label .quota-row { grid-template-columns: 104px 1fr 168px; }
+.ch-block.wide-label .quota-row { grid-template-columns: 104px 1fr 216px; }
 .q-bar {
   position: relative; height: 8px; border-radius: 4px;
   background: var(--q-track); overflow: visible;
@@ -291,10 +291,12 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
   position: absolute; top: -3px; bottom: -3px; width: 2px;
   background: var(--tick); border-radius: 1px;
 }
-.q-meta { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; }
+.q-meta { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; gap: 8px; }
+.q-pct-wrap { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
 .q-pct { font-weight: 600; font-variant-numeric: tabular-nums; }
 .q-pct.g { color: var(--green); } .q-pct.o { color: var(--orange); } .q-pct.r { color: var(--red); }
-.q-reset { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.q-rem { color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.q-reset { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 11px; }
 .q-nodata { color: var(--text-dim); font-size: 12px; font-style: italic; padding: 5px 0 5px 66px; }
 
 .balance-line {
@@ -473,6 +475,27 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
 }
 .share-btn:hover { border-color: var(--text-dim); }
 .share-btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+.unconfigured-toggle-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+.unconfigured-toggle-btn {
+  background: var(--card);
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+  border-radius: 20px;
+  padding: 6px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.unconfigured-toggle-btn:hover {
+  color: var(--text);
+  border-color: var(--blue);
+  background: var(--panel);
+}
 
 @media (max-width: 860px) {
   .overview-cards { grid-template-columns: repeat(2, 1fr); }
