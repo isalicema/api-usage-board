@@ -120,8 +120,8 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
 .tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
 
 .title-row {
-  display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 18px;
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  column-gap: 12px; margin-bottom: 18px;
 }
 .title-row h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; }
 /* Yandex 式荧光标记：标题末词衬酸橙色块并微倾（Aurora 风的识别物） */
@@ -129,17 +129,22 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
   display: inline-block; background: var(--lime); color: #1c2033;
   padding: 0 8px; border-radius: 5px; transform: rotate(-1.2deg);
 }
-.title-left { display: flex; flex-direction: column; gap: 4px; }
+/* meta 行：昵称（左）与同步状态（右）同一基线，横跨标题行整宽 */
+.title-meta {
+  grid-column: 1 / -1; display: flex; justify-content: space-between;
+  align-items: baseline; gap: 12px; margin-top: 6px;
+}
 /* 昵称：多人分享同一份工具时用来区分截图/分享卡归属，本地存储，不上传 */
 .user-tag {
-  align-self: flex-start; background: none; border: none; cursor: pointer;
-  color: var(--text-dim); font-size: 12px; padding: 0; font-family: inherit;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: 13px; font-weight: 500; padding: 0; font-family: inherit;
+  white-space: nowrap;
 }
 .user-tag:hover { color: var(--blue); }
 .user-tag-input {
   background: var(--card); border: 1px solid var(--border); border-radius: 6px;
-  color: var(--text); font-size: 12px; padding: 2px 8px; font-family: inherit;
-  width: 140px; outline: none;
+  color: var(--text); font-size: 13px; padding: 3px 10px; font-family: inherit;
+  width: 160px; outline: none; align-self: center;
 }
 .user-tag-input:focus { border-color: var(--blue); }
 .title-right { display: flex; align-items: center; gap: 12px; }
@@ -330,8 +335,7 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
 
 /* ---- Token tab ---- */
 .sync-row {
-  display: flex; justify-content: flex-end;
-  color: var(--text-dim); font-size: 12px; margin-bottom: 14px;
+  color: var(--text-dim); font-size: 13px; white-space: nowrap;
 }
 .sync-row .dot { color: var(--green); margin-right: 6px; }
 

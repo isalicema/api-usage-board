@@ -1057,13 +1057,13 @@ async function drawShareCard() {
   ctx.fillText('Monitor', 0, 0);
   ctx.restore();
 
-  // 昵称（标题左下，多人共用同一份工具时区分分享卡归属；未设置则不画）
+  // 昵称（标题下方 meta 行，与右侧日期同一基线；未设置则不画）
   const userTag = getUserTag();
   if (userTag) {
     ctx.font = `500 15px ${FF}`;
     ctx.fillStyle = P.dim;
     ctx.textAlign = 'left';
-    ctx.fillText(userTag, PAD, yTitle + 54);
+    ctx.fillText(userTag, PAD, yTitle + 60);
   }
 
   // 右上：渠道图标行（在线/同步正常 = 点亮；offline/未配置/未运行 = 压暗）+ 下方日期
