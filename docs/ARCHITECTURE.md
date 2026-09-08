@@ -34,7 +34,7 @@ usage-board.js（store + 轮询 + 告警推导 + localStorage 历史 + 渲染）
 | OpenRouter | `GET /api/v1/credits` + `GET /api/v1/auth/key`（key 类型检测）。key 配置：`server/.env` 或环境变量 | **需 management key**（Settings → Management Keys）。序列用 `POST /api/v1/analytics/query`（一次拿 45 天）。花费为真实 USD。无项目维度 |
 | Grok | `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`（Bearer = `~/.grok/auth.json`）。**注意**：`creditUsagePercent` 是付费 credit 字段，free 用户恒省略——free 额度信号来自推理 429 报错文本（`subscription:free-usage-exhausted`），从 `unified.jsonl` 尾部解析；offline 同样必带原因 | `~/.grok/sessions/*/*/updates.jsonl` 的 `params._meta.totalTokens`，语义是上下文体积快照（非单调），近似口径 |
 | Cursor | `POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`。凭证：`state.vscdb`（复制到临时目录只读打开）| 无本地干净日志，`tokenData:false`，不进 Token tab |
-| Antigravity | 凭证未定位，机会主义采集：agy 运行时从最新 `cli-*.log` 正则出 language server 端口，POST `RetrieveUserQuotaSummary`。不跑则 `dormant` | 无，`tokenData:false` |
+| Antigravity | **配额**仍是机会主义采集：凭证未定位，agy 运行时从最新 `cli-*.log` 正则出 language server 端口，POST `RetrieveUserQuotaSummary`。不跑则 `dormant`（不依赖 Token 序列，两条数据源独立） | **本地增量扫描**（不依赖 agy 运行）：`~/.gemini/antigravity-cli/conversations/*.db` 的 `gen_metadata` 表，手写 varint 解码器解 protobuf（`node:sqlite` 优先，无该模块时回退 `sqlite3` CLI），严格走 `field 1(Response)→field 4(Usage)→field 1/3/5(in/out/cache)` 路径，非该路径或单值超 `MAX_TOKENS_PER_STEP`（5,000,000，防止误读到时间戳等无关字段）一律判为非法丢弃；cwd/日期从 `brain/<cid>/.system_generated/logs/transcript.jsonl` 里的 `step_index`/`created_at` 关联；增量缓存 `server/.cache/antigravity-scan.json`（该表混有非生成事件，是社区贡献 PR 反复调试后才收敛到这条严格路径，见 repo PR #1） |
 
 **`unconfigured` vs `offline`**：Kimi/Grok/Cursor/DeepSeek 四个适配器在请求前先判凭证目录
 是否存在——目录都不存在（从没跑过这个工具）直接返 `unconfigured`（灰色，不进告警横幅）；

@@ -77,9 +77,9 @@ nohup "/path/to/api-usage-board/serve.command" >/dev/null 2>&1 &
 ## 已知限制
 
 - Claude/Codex 的配额直连走的是未公开接口（跟随官方客户端行为），可能随时漂移；都有降级链（直连失败→旧方案→offline），不会直接报错
-- Antigravity 凭证位置未定位，只能在 agy 运行时机会主义采集；不跑则显示"未运行"
+- Antigravity **配额**仍靠机会主义采集，凭证位置未定位，只有 agy 运行时才能查到，不跑则显示"未运行"；**Token 用量**已从本地会话库解析，跟 agy 是否运行无关（社区 PR #1 贡献）
 - Grok 的 token 序列是上下文快照近似值，不是精确计量
-- Cursor / Antigravity 没有本地干净日志，不进 Token 用量 tab
+- Cursor 没有本地干净日志，不进 Token 用量 tab
 
 ## 安全
 
