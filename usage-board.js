@@ -199,6 +199,49 @@ function applyPanelStates() {
   });
 }
 
+// ============ 昵称（多人共用同一份工具时区分截图/分享卡归属，纯本地，不上传） ============
+const USER_TAG_KEY = 'aub:user-tag';
+function getUserTag() {
+  try { return localStorage.getItem(USER_TAG_KEY) || ''; } catch { return ''; }
+}
+function setUserTag(v) {
+  try {
+    if (v) localStorage.setItem(USER_TAG_KEY, v); else localStorage.removeItem(USER_TAG_KEY);
+  } catch {}
+}
+function normalizeUserTag(raw) {
+  let v = (raw || '').trim().slice(0, 20);
+  if (!v) return '';
+  if (!v.startsWith('@')) v = '@' + v;
+  return v;
+}
+function renderUserTag() {
+  const root = $('#user-tag-wrap');
+  if (!root) return;
+  const tag = getUserTag();
+  root.innerHTML = '';
+  const btn = el('button', 'user-tag', tag || '+ 设置昵称');
+  btn.type = 'button';
+  btn.title = tag ? '点击修改昵称' : '点击设置你的昵称，会显示在页面和分享卡上（仅存本地，不上传）';
+  btn.addEventListener('click', () => {
+    root.innerHTML = '';
+    const input = document.createElement('input');
+    input.className = 'user-tag-input';
+    input.value = tag;
+    input.maxLength = 20;
+    input.placeholder = '@你的昵称';
+    root.appendChild(input);
+    input.focus();
+    input.select();
+    input.addEventListener('blur', () => { setUserTag(normalizeUserTag(input.value)); renderUserTag(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') input.blur();
+      if (e.key === 'Escape') { input.value = tag; input.blur(); }
+    });
+  });
+  root.appendChild(btn);
+}
+
 // ============ localStorage 历史 ============
 function loadHist(key) {
   try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
@@ -1014,6 +1057,15 @@ async function drawShareCard() {
   ctx.fillText('Monitor', 0, 0);
   ctx.restore();
 
+  // 昵称（标题左下，多人共用同一份工具时区分分享卡归属；未设置则不画）
+  const userTag = getUserTag();
+  if (userTag) {
+    ctx.font = `500 15px ${FF}`;
+    ctx.fillStyle = P.dim;
+    ctx.textAlign = 'left';
+    ctx.fillText(userTag, PAD, yTitle + 54);
+  }
+
   // 右上：渠道图标行（在线/同步正常 = 点亮；offline/未配置/未运行 = 压暗）+ 下方日期
   const quotaChs = state.quota?.channels || [];
   const iconOrder = quotaChs.length ? quotaChs.map((c) => c.id) : Object.keys(CH_ICONS);
@@ -1315,6 +1367,7 @@ $('#tab-token').addEventListener('click', (e) => {
   setPanelCollapsed(id, !panelCollapsed[id]);
 });
 applyPanelStates(); // 恢复上次会话的折叠态
+renderUserTag();
 window.addEventListener('resize', () => {
   if (state.token && state.tab === 'token') { drawChart(); renderHeatmap(); fitOverviewNums(); } // 格子尺寸随面板宽度重算
 });

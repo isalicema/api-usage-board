@@ -129,6 +129,19 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
   display: inline-block; background: var(--lime); color: #1c2033;
   padding: 0 8px; border-radius: 5px; transform: rotate(-1.2deg);
 }
+.title-left { display: flex; flex-direction: column; gap: 4px; }
+/* 昵称：多人分享同一份工具时用来区分截图/分享卡归属，本地存储，不上传 */
+.user-tag {
+  align-self: flex-start; background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: 12px; padding: 0; font-family: inherit;
+}
+.user-tag:hover { color: var(--blue); }
+.user-tag-input {
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-size: 12px; padding: 2px 8px; font-family: inherit;
+  width: 140px; outline: none;
+}
+.user-tag-input:focus { border-color: var(--blue); }
 .title-right { display: flex; align-items: center; gap: 12px; }
 .local-time { color: var(--text-dim); font-size: 13px; }
 
