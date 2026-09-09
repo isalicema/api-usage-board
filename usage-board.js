@@ -637,7 +637,8 @@ function renderMilestone() {
 function renderLegend() {
   const lg = $('#chart-legend');
   lg.innerHTML = '';
-  for (const ch of state.token.channels) {
+  // 只列有真实用量的渠道——没用过的 coding agent 图注对公开版用户是噪音（还会带进分享卡）
+  for (const ch of state.token.channels.filter((c) => c.total > 0)) {
     const item = el('span', 'lg-item');
     const dot = el('span', 'lg-dot');
     dot.style.background = ch.color;
@@ -1297,11 +1298,11 @@ async function drawShareCard(panels = getSharePanels()) {
       if (i % labelEvery !== 0 && i !== days - 1) continue;
       ctx.fillText(tk.dates[i].slice(5), tx + padL + slot * i + slot / 2, ty + padT + plotH + 16);
     }
-    // 图注：色块 → 渠道名（与堆叠顺序一致）
+    // 图注：色块 → 渠道名（与堆叠顺序一致；只列有真实用量的渠道，同页面图注逻辑）
     const lgY = ty + th + 16;
     let lx = tx + padL;
     ctx.font = `400 11px ${FF}`;
-    for (const ch of tk.channels) {
+    for (const ch of tk.channels.filter((c) => c.total > 0)) {
       ctx.fillStyle = ch.color;
       rr(lx, lgY - 9, 10, 10, 3); ctx.fill();
       ctx.fillStyle = P.dim; ctx.textAlign = 'left';
