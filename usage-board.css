@@ -479,11 +479,22 @@ body, .panel, .ov-card, .q-chip, .alert-box, .alert-chip,
   border-radius: 20px;
   padding: 18px;
   width: min(860px, 92vw);
+  max-height: calc(100vh - 48px); /* 全开面板时卡面很高，弹层内部滚动 */
+  overflow-y: auto;
   backdrop-filter: blur(18px) saturate(1.3);
   -webkit-backdrop-filter: blur(18px) saturate(1.3);
   box-shadow: var(--panel-shadow);
 }
 .share-img { display: block; width: 100%; border-radius: 12px; border: 1px solid var(--border); }
+.share-panels { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+.share-panel {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text-dim); cursor: pointer; user-select: none;
+}
+.share-panel:hover { color: var(--text); }
+.share-panel input { accent-color: var(--blue); cursor: pointer; margin: 0; }
+.share-panel.dim { opacity: 0.5; cursor: default; }
+.share-panel.dim input { cursor: default; }
 .share-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 .share-btn {
   font-family: inherit; font-size: 13px; cursor: pointer;

@@ -981,7 +981,36 @@ function renderCostPanel() {
 const SHARE_FF = '"Avenir Next","Avenir",system-ui,"PingFang SC",sans-serif';
 const shareFileName = () => `multi-ai-usage-${todayKey()}.png`;
 
-async function drawShareCard() {
+// 分享卡可勾选面板：弹层内 checkbox 切换，选择持久化 localStorage。
+// 前四项是卡面原有组成（默认开）；扩展面板默认关，保持经典卡面为默认形态
+const SHARE_PANELS = [
+  ['cards', '今日概览'],
+  ['heatmap', '热力图'],
+  ['trend', '趋势与分布'],
+  ['agentmodel', 'Agent 与模型'],
+  ['project', '项目'],
+  ['cost', '套餐回报'],
+  ['icons', '渠道图标'],
+  ['tag', '昵称'],
+];
+const SHARE_PANELS_KEY = 'aub:share-panels';
+const SHARE_PANELS_DEFAULT = {
+  cards: true, heatmap: true, icons: true, tag: true,
+  trend: false, agentmodel: false, project: false, cost: false,
+};
+function getSharePanels() {
+  try { return { ...SHARE_PANELS_DEFAULT, ...JSON.parse(localStorage.getItem(SHARE_PANELS_KEY) || '{}') }; }
+  catch { return { ...SHARE_PANELS_DEFAULT }; }
+}
+function setSharePanel(key, on) {
+  try {
+    const p = getSharePanels();
+    p[key] = on;
+    localStorage.setItem(SHARE_PANELS_KEY, JSON.stringify(p));
+  } catch {}
+}
+
+async function drawShareCard(panels = getSharePanels()) {
   const t = state.token.today;
   const hm = state.heatmap;
   const ms = computeMilestone(hm);
@@ -1013,12 +1042,41 @@ async function drawShareCard() {
   const gridX = PAD + (CW - gridW) / 2;
 
   const yTitle = PAD;
-  const yCards = yTitle + 84; // 标题行 + 渠道图标行
   const CARD_H = 138;
-  const yHmLabel = yCards + CARD_H + 48;
+  // 可勾选面板按固定顺序排布，yCursor 逐步推进；yFoot 落在最后一块内容之下。
+  // 扩展面板还需数据就绪才有效（eff），无数据时即使勾选也跳过
+  const tk = state.token;
+  const eff = {
+    cards: panels.cards,
+    heatmap: panels.heatmap,
+    trend: panels.trend && !!tk?.dates?.length,
+    agentmodel: panels.agentmodel && !!tk?.channels?.length,
+    project: panels.project && !!state.byProject?.length,
+    cost: panels.cost && !!state.costSummary?.channels?.length,
+  };
+  const ROW_H = 30; // 横条/费用行统一行高
+  const duoRows = eff.agentmodel
+    ? Math.max(tk.channels.length, Math.min(6, tk.models.length) + (tk.models.length > 6 ? 1 : 0))
+    : 0;
+  const projRows = eff.project
+    ? Math.min(6, state.byProject.length) + (state.byProject.length > 6 ? 1 : 0)
+    : 0;
+  let yCursor = yTitle + 84; // 标题行（含渠道图标行）占位
+  const yCards = yCursor;
+  if (eff.cards) yCursor += CARD_H + 48;
+  const yHmLabel = yCursor;
   const yGrid = yHmLabel + 34;
   const yMonth = yGrid + gridH + 12;
-  const yFoot = yMonth + 56;
+  if (eff.heatmap) yCursor = yMonth + 56;
+  const yTrend = yCursor;
+  if (eff.trend) yCursor += 34 + 200 + 24 + 46; // 图 + 图注行
+  const yDuo = yCursor;
+  if (eff.agentmodel) yCursor += 34 + 20 + duoRows * ROW_H + 40;
+  const yProj = yCursor;
+  if (eff.project) yCursor += 34 + projRows * ROW_H + 40;
+  const yCost = yCursor;
+  if (eff.cost) yCursor += 34 + 30 + state.costSummary.channels.length * ROW_H + 40;
+  const yFoot = yCursor;
   const H = yFoot + 40;
 
   const canvas = document.createElement('canvas');
@@ -1057,9 +1115,9 @@ async function drawShareCard() {
   ctx.fillText('Monitor', 0, 0);
   ctx.restore();
 
-  // 昵称（标题下方 meta 行，与右侧日期同一基线；未设置则不画）
+  // 昵称（标题下方 meta 行，与右侧日期同一基线；未设置或未勾选则不画）
   const userTag = getUserTag();
-  if (userTag) {
+  if (panels.tag && userTag) {
     ctx.font = `500 15px ${FF}`;
     ctx.fillStyle = P.dim;
     ctx.textAlign = 'left';
@@ -1072,10 +1130,12 @@ async function drawShareCard() {
   const activeIds = new Set(quotaChs.length
     ? quotaChs.filter((c) => c.status === 'online' || c.status === 'stale').map((c) => c.id)
     : hm.channels.map((c) => c.id));
-  const iconImgs = await Promise.all(iconOrder.map((id) => loadIconImage(id, light)));
+  const iconImgs = panels.icons
+    ? await Promise.all(iconOrder.map((id) => loadIconImage(id, light)))
+    : [];
   const T = 34, tGap = 8;
   const ix0 = W - PAD - (iconOrder.length * T + (iconOrder.length - 1) * tGap);
-  iconOrder.forEach((id, i) => {
+  if (panels.icons) iconOrder.forEach((id, i) => {
     if (!CH_ICONS[id]) return;
     const x = ix0 + i * (T + tGap), y = yTitle - 4;
     const col = chIconColor(id, light);
@@ -1089,7 +1149,10 @@ async function drawShareCard() {
   ctx.font = `500 15px ${FF}`;
   ctx.fillStyle = P.dim;
   ctx.textAlign = 'right';
-  ctx.fillText(`${t.date} · 今日`, W - PAD, yTitle + 60);
+  // 右上日期带生成时刻（分享出去后「今日」会失锚，时间戳不会）
+  const nowD = new Date();
+  const hhmm = `${String(nowD.getHours()).padStart(2, '0')}:${String(nowD.getMinutes()).padStart(2, '0')}`;
+  ctx.fillText(`${t.date} · ${hhmm}`, W - PAD, yTitle + 60);
   ctx.textAlign = 'left';
 
   // 今日概览四数值卡
@@ -1105,7 +1168,7 @@ async function drawShareCard() {
       sub: `${ms.peakDate} · 占累计 ${ms.total > 0 ? (ms.peak / ms.total * 100).toFixed(1) : 0}%`, dim: '含 cache' },
   ];
   const cGap = 14, cW = (CW - 3 * cGap) / 4;
-  cards.forEach((c, i) => {
+  if (panels.cards) cards.forEach((c, i) => {
     const x = PAD + i * (cW + cGap);
     ctx.fillStyle = P.cardFill;
     ctx.strokeStyle = P.cardBorder;
@@ -1124,6 +1187,7 @@ async function drawShareCard() {
   });
 
   // 一年热力图（与页面同口径：sqrt 六档、周一起始、未来列虚线）
+  if (panels.heatmap) {
   ctx.fillStyle = P.label;
   ctx.font = `600 15px ${FF}`;
   ctx.fillText('每日用量 · 最近一年 · 含 cache', PAD, yHmLabel + 12);
@@ -1170,6 +1234,144 @@ async function drawShareCard() {
     }
     prevMonth = mon;
   }
+  }
+
+  // ---- 扩展面板（趋势 / Agent 与模型 / 项目 / 套餐回报）----
+  const secLabel = (text, y) => {
+    ctx.fillStyle = P.label;
+    ctx.font = `600 15px ${FF}`;
+    ctx.textAlign = 'left';
+    ctx.fillText(text, PAD, y + 12);
+  };
+  // 横条行：名字（左）+ 数值·占比（右）+ 比例条，行高 ROW_H
+  const drawHbars = (rows, x, y, w) => {
+    const max = Math.max(...rows.map((r) => r.tokens), 1);
+    const total = rows.reduce((s, r) => s + r.tokens, 0) || 1;
+    rows.forEach((r, i) => {
+      const ry = y + i * ROW_H;
+      ctx.fillStyle = P.label; ctx.font = `500 13px ${FF}`; ctx.textAlign = 'left';
+      ctx.fillText(r.name, x, ry + 12, w - 150);
+      ctx.fillStyle = P.dim; ctx.font = `400 12px ${FF}`; ctx.textAlign = 'right';
+      ctx.fillText(`${fmtTokens(r.tokens)} · ${(r.tokens / total * 100).toFixed(1)}%`, x + w, ry + 12);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = P.hmTrack; rr(x, ry + 18, w, 6, 3); ctx.fill();
+      ctx.fillStyle = r.color; rr(x, ry + 18, Math.max(2, (r.tokens / max) * w), 6, 3); ctx.fill();
+    });
+  };
+
+  // 趋势与分布：每日堆叠柱（与页面趋势图同数据，卡面调色板重绘）
+  if (eff.trend) {
+    secLabel('趋势与分布 · 每日堆叠用量', yTrend);
+    const tx = PAD, ty = yTrend + 34, tw = CW, th = 200;
+    const padL = 44, padT = 4, padB = 24;
+    const plotW = tw - padL, plotH = th - padT - padB;
+    const days = tk.dates.length;
+    const dayTotals = tk.dates.map((_, i) => tk.channels.reduce((s, c) => s + c.daily[i], 0));
+    const maxYi = Math.max(...dayTotals) / 1e8;
+    const step = Math.max(1, Math.ceil(maxYi / 4));
+    const yMax = step * 4;
+    ctx.font = `400 11px ${FF}`;
+    for (let v = 0; v <= yMax; v += step) {
+      const gy = ty + padT + plotH - (v / yMax) * plotH;
+      ctx.strokeStyle = P.hmTrack; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(tx + padL, gy); ctx.lineTo(tx + tw, gy); ctx.stroke();
+      ctx.fillStyle = P.dim; ctx.textAlign = 'right';
+      ctx.fillText(v === 0 ? '0' : `${v}亿`, tx + padL - 8, gy + 4);
+    }
+    const slot = plotW / days;
+    const barW = Math.max(2, Math.min(22, slot * 0.6));
+    for (let i = 0; i < days; i++) {
+      const cx = tx + padL + slot * i + slot / 2;
+      let yBase = ty + padT + plotH;
+      for (const ch of tk.channels) {
+        const bh = (ch.daily[i] / 1e8 / yMax) * plotH;
+        if (bh <= 0) continue;
+        ctx.fillStyle = ch.color;
+        ctx.fillRect(cx - barW / 2, yBase - bh, barW, bh);
+        yBase -= bh;
+      }
+    }
+    ctx.fillStyle = P.dim; ctx.textAlign = 'center';
+    const labelEvery = Math.max(1, Math.ceil(days / 10));
+    for (let i = 0; i < days; i++) {
+      if (i % labelEvery !== 0 && i !== days - 1) continue;
+      ctx.fillText(tk.dates[i].slice(5), tx + padL + slot * i + slot / 2, ty + padT + plotH + 16);
+    }
+    // 图注：色块 → 渠道名（与堆叠顺序一致）
+    const lgY = ty + th + 16;
+    let lx = tx + padL;
+    ctx.font = `400 11px ${FF}`;
+    for (const ch of tk.channels) {
+      ctx.fillStyle = ch.color;
+      rr(lx, lgY - 9, 10, 10, 3); ctx.fill();
+      ctx.fillStyle = P.dim; ctx.textAlign = 'left';
+      ctx.fillText(ch.name, lx + 14, lgY);
+      lx += 14 + ctx.measureText(ch.name).width + 18;
+    }
+    ctx.textAlign = 'left';
+  }
+
+  // Coding Agent 与模型：两栏并排（Agent 按渠道 / 模型 top6 + 其他）
+  if (eff.agentmodel) {
+    secLabel('Coding Agent 与模型 · 用量分布', yDuo);
+    const colGap = 48, colW = (CW - colGap) / 2, cy = yDuo + 34;
+    ctx.fillStyle = P.dim; ctx.font = `500 12px ${FF}`;
+    ctx.fillText('CODING AGENT', PAD, cy + 10);
+    ctx.fillText('模型', PAD + colW + colGap, cy + 10);
+    const agentColor = (id) => (tk.channels.find((c) => c.id === id) || {}).color || P.dim;
+    drawHbars(tk.channels.map((c) => ({ name: c.name, tokens: c.total, color: c.color })), PAD, cy + 20, colW);
+    const mrows = tk.models.slice(0, 6)
+      .map((m) => ({ name: m.name, tokens: m.tokens, color: agentColor(m.channel) }));
+    if (tk.models.length > 6) {
+      const rest = tk.models.slice(6);
+      mrows.push({ name: `其他 ${rest.length} 项`, tokens: rest.reduce((s, m) => s + m.tokens, 0), color: P.dim });
+    }
+    drawHbars(mrows, PAD + colW + colGap, cy + 20, colW);
+  }
+
+  // 项目：按工作目录聚合 top6 + 其他
+  if (eff.project) {
+    secLabel('项目 · 按工作目录聚合', yProj);
+    const prows = state.byProject.slice(0, 6).map((p) => ({
+      name: p.project + (p.mergedFrom ? `（已合并 ${p.mergedFrom.length} 个目录）` : ''),
+      tokens: p.tokens,
+      color: light ? '#4c5df5' : '#7280ff',
+    }));
+    if (state.byProject.length > 6) {
+      const rest = state.byProject.slice(6);
+      prows.push({ name: `其他 ${rest.length} 项`, tokens: rest.reduce((s, p) => s + p.tokens, 0), color: P.dim });
+    }
+    drawHbars(prows, PAD, yProj + 34, CW);
+  }
+
+  // 套餐投入回报：汇总行 + 各渠道行（等效费用 / 订阅 / ROI）
+  if (eff.cost) {
+    const cs = state.costSummary, s = cs.summary;
+    secLabel(`套餐投入回报 · 近 ${cs.days} 日`, yCost);
+    ctx.fillStyle = P.dim; ctx.font = `400 12px ${FF}`; ctx.textAlign = 'left';
+    ctx.fillText(
+      `等效 $${fmtNum(s.totalEquivUSD)} · 订阅折合约 $${fmtNum(s.totalMonthlyUSD)}` +
+      (s.roi != null ? ` · 综合回报 ${s.roi}×` : '') + '（刊例价估算）',
+      PAD, yCost + 34 + 14);
+    cs.channels.forEach((c, i) => {
+      const ry = yCost + 34 + 30 + i * ROW_H;
+      ctx.fillStyle = P.label; ctx.font = `500 13px ${FF}`; ctx.textAlign = 'left';
+      ctx.fillText(c.name, PAD, ry + 12, 240);
+      const val = c.actualUSD != null ? c.actualUSD : c.equivUSD;
+      ctx.fillText(`$${fmtNum(Math.round(val))}${c.priced === false ? ' ~' : ''}`, PAD + 280, ry + 12);
+      ctx.fillStyle = P.dim; ctx.font = `400 12px ${FF}`;
+      const sub = c.subscription
+        ? (c.subscription.monthly > 0
+          ? `${c.subscription.plan} ${curSym(c.subscription.currency)}${c.subscription.monthly}/月`
+          : `${c.subscription.plan} $0/月`)
+        : (c.note || '按量计费');
+      ctx.fillText(sub, PAD + 420, ry + 12, 380);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = P.label; ctx.font = `600 13px ${FF}`;
+      ctx.fillText(c.roi != null ? `${c.roi}×` : (c.subscription && c.subscription.monthly === 0 ? '∞' : '—'), W - PAD, ry + 12);
+      ctx.textAlign = 'left';
+    });
+  }
 
   // 页脚：版权 + 统计区间
   ctx.font = `400 13px ${FF}`;
@@ -1188,6 +1390,21 @@ function buildShareOverlay() {
   const img = el('img', 'share-img');
   img.alt = 'Multi-AI Usage 分享卡';
   box.appendChild(img);
+  // 面板勾选：切换即重绘，选择持久化（见 SHARE_PANELS）
+  const panelsRow = el('div', 'share-panels');
+  for (const [key, label] of SHARE_PANELS) {
+    const lab = el('label', 'share-panel');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.panel = key;
+    lab.append(cb, document.createTextNode(label));
+    panelsRow.appendChild(lab);
+    cb.addEventListener('change', () => {
+      setSharePanel(key, cb.checked);
+      refreshShareCard(ov);
+    });
+  }
+  box.appendChild(panelsRow);
   const actions = el('div', 'share-actions');
   const closeBtn = el('button', 'share-btn', '关闭');
   const copyBtn = el('button', 'share-btn', '复制图片');
@@ -1225,10 +1442,8 @@ function buildShareOverlay() {
   return ov;
 }
 
-async function openShare() {
-  if (!state.token || !state.heatmap) return;
+async function refreshShareCard(ov) {
   const canvas = await drawShareCard();
-  const ov = $('#share-overlay') || buildShareOverlay();
   ov._canvas = canvas;
   ov.querySelector('.share-img').src = canvas.toDataURL('image/png');
   canvas.toBlob((blob) => {
@@ -1237,6 +1452,31 @@ async function openShare() {
     const btn = ov.querySelector('[data-act="share"]');
     btn.hidden = !(navigator.canShare && navigator.canShare({ files: [f] }));
   }, 'image/png');
+}
+
+async function openShare() {
+  if (!state.token || !state.heatmap) return;
+  const ov = $('#share-overlay') || buildShareOverlay();
+  // 回填勾选状态；数据缺口的项禁用（昵称未设置 / 无项目数据 / 无费用数据等）
+  const panels = getSharePanels();
+  const avail = {
+    cards: true, heatmap: true, icons: true,
+    tag: !!getUserTag(),
+    trend: !!state.token?.dates?.length,
+    agentmodel: !!state.token?.channels?.length,
+    project: !!state.byProject?.length,
+    cost: !!state.costSummary?.channels?.length,
+  };
+  const disabledHint = { tag: '先在页头设置昵称', project: '无项目维度数据', cost: '无费用数据' };
+  ov.querySelectorAll('.share-panel input').forEach((cb) => {
+    const key = cb.dataset.panel;
+    cb.checked = panels[key];
+    cb.disabled = !avail[key];
+    const lab = cb.closest('label');
+    lab.classList.toggle('dim', !avail[key]);
+    lab.title = avail[key] ? '' : (disabledHint[key] || '数据不可用');
+  });
+  await refreshShareCard(ov);
   ov.hidden = false;
 }
 
