@@ -1,6 +1,6 @@
 # api-usage-board — AI API 用量监控 Dashboard
 
-**v2.0** · 深/浅双主题监控台，一屏看完 **8 个 AI 编程工具/API 渠道**的配额、token 用量和费用：
+**v2.1** · 深/浅双主题监控台，一屏看完 **8 个 AI 编程工具/API 渠道**的配额、token 用量和费用：
 Claude Code / Codex / Kimi Code / DeepSeek / OpenRouter / Grok / Cursor / Antigravity。
 
 纯前端 vanilla HTML/CSS/JS（ES modules），无构建步骤、无外部依赖、无 CDN；本地 server
