@@ -109,6 +109,8 @@ function fmtTokens(n) {
   return String(Math.round(n));
 }
 function fmtNum(n) { return n.toLocaleString('en-US'); }
+// 费用展示：统一两位小数（$0.06 不被抹零，大数带千分位）
+function fmtUsd(n) { return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
 const CUR_SYM = { CNY: '¥', USD: '$' };
 const curSym = (c) => CUR_SYM[c] || (c ? c + ' ' : '');
@@ -782,7 +784,7 @@ function renderChartSummary() {  const d = state.token;
   const metricLabel = d.metric === 'auth' ? '权威量（不含 cache）' : '总处理量（含 cache）';
   $('#chart-summary').textContent =
     `${d.dates[0]} 至 ${d.dates[d.dates.length - 1]} · ${metricLabel} · ` +
-    `等效估值 $${fmtNum(d.estimateUSD)}（部分），非订阅账单`;
+    `等效估值 $${fmtUsd(d.estimateUSD)}（部分），非订阅账单`;
 }
 
 function renderHbars(rootSel, rows, colorOf, base = null) {
@@ -896,7 +898,7 @@ function renderCostPanel() {
 
   const s = cs.summary;
   $('#cost-summary-line').textContent =
-    `近 ${cs.days} 日等效 $${fmtNum(s.totalEquivUSD)} · 订阅折合约 $${fmtNum(s.totalMonthlyUSD)}` +
+    `近 ${cs.days} 日等效 $${fmtUsd(s.totalEquivUSD)} · 订阅折合约 $${fmtUsd(s.totalMonthlyUSD)}` +
     (s.roi != null ? ` · 综合回报 ${s.roi}×` : '');
   $('#cost-note').textContent =
     `按官方刊例价估算 · ROI 统一美元口径（CNY 按汇率 ${cs.cnyUsdRate} 折算）· 价格表与套餐金额见 server/config.json`;
@@ -913,7 +915,7 @@ function renderCostPanel() {
 
     const equiv = el('span', 'cost-equiv');
     const val = c.actualUSD != null ? c.actualUSD : c.equivUSD;
-    equiv.appendChild(document.createTextNode(`$${fmtNum(Math.round(val))}`));
+    equiv.appendChild(document.createTextNode(`$${fmtUsd(val)}`));
     if (c.priced === false) equiv.appendChild(el('span', 'cost-tilde', '~')); // 有模型用了 fallback 价
     row.appendChild(equiv);
 
@@ -1351,7 +1353,7 @@ async function drawShareCard(panels = getSharePanels()) {
     secLabel(`套餐投入回报 · 近 ${cs.days} 日`, yCost);
     ctx.fillStyle = P.dim; ctx.font = `400 12px ${FF}`; ctx.textAlign = 'left';
     ctx.fillText(
-      `等效 $${fmtNum(s.totalEquivUSD)} · 订阅折合约 $${fmtNum(s.totalMonthlyUSD)}` +
+      `等效 $${fmtUsd(s.totalEquivUSD)} · 订阅折合约 $${fmtUsd(s.totalMonthlyUSD)}` +
       (s.roi != null ? ` · 综合回报 ${s.roi}×` : '') + '（刊例价估算）',
       PAD, yCost + 34 + 14);
     cs.channels.forEach((c, i) => {
@@ -1359,7 +1361,7 @@ async function drawShareCard(panels = getSharePanels()) {
       ctx.fillStyle = P.label; ctx.font = `500 13px ${FF}`; ctx.textAlign = 'left';
       ctx.fillText(c.name, PAD, ry + 12, 240);
       const val = c.actualUSD != null ? c.actualUSD : c.equivUSD;
-      ctx.fillText(`$${fmtNum(Math.round(val))}${c.priced === false ? ' ~' : ''}`, PAD + 280, ry + 12);
+      ctx.fillText(`$${fmtUsd(val)}${c.priced === false ? ' ~' : ''}`, PAD + 280, ry + 12);
       ctx.fillStyle = P.dim; ctx.font = `400 12px ${FF}`;
       const sub = c.subscription
         ? (c.subscription.monthly > 0
