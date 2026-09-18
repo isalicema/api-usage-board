@@ -4,10 +4,10 @@
   "modelPrices": {
     "_comment": "美元/百万 tokens，按模型名前缀匹配（最长匹配优先）。占位刊例价，待用户核实——未来型号真实价格未知。",
     "claude-opus": {
-      "input": 15,
-      "output": 75,
-      "cacheRead": 1.5,
-      "cacheWrite": 18.75
+      "input": 5,
+      "output": 25,
+      "cacheRead": 0.5,
+      "cacheWrite": 6.25
     },
     "claude-sonnet": {
       "input": 3,
@@ -21,11 +21,29 @@
       "cacheRead": 0.08,
       "cacheWrite": 1
     },
-    "gpt-5.6": {
-      "input": 2.5,
-      "output": 10,
-      "cacheRead": 0.25,
+    "gpt-6-astra": {
+      "input": 10,
+      "output": 50,
+      "cacheRead": 1,
+      "cacheWrite": 12.5
+    },
+    "gpt-5.6-terra": {
+      "input": 2,
+      "output": 12,
+      "cacheRead": 0.2,
       "cacheWrite": 2.5
+    },
+    "gpt-5.6-luna": {
+      "input": 0.2,
+      "output": 1.2,
+      "cacheRead": 0.02,
+      "cacheWrite": 0.25
+    },
+    "gpt-5.6": {
+      "input": 4,
+      "output": 20,
+      "cacheRead": 0.4,
+      "cacheWrite": 5
     },
     "gpt-5.5": {
       "input": 2,
