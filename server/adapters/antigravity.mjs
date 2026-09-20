@@ -289,12 +289,13 @@ async function scan() {
       const row = rowsMap[key] || (rowsMap[key] = {
         date, model, cwd: cwd || null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
       });
-      row.input += tok.input;
+      const freshInput = Math.max(0, tok.input - tok.cacheRead); // prompt_token_count 官方文档写明已含 cached_content_token_count，需要减掉避免重复计费
+      row.input += freshInput;
       row.output += tok.output;
       row.cacheRead += tok.cacheRead;
 
       fileRows.push({
-        date, model, cwd: cwd || null, input: tok.input, output: tok.output, cacheRead: tok.cacheRead,
+        date, model, cwd: cwd || null, input: freshInput, output: tok.output, cacheRead: tok.cacheRead,
       });
     }
 
