@@ -160,7 +160,7 @@ function scan() {
       const key = `${date}|${r.model || 'unknown'}|${r.cwd || ''}`;
       const row = cache.rows[key] || (cache.rows[key] = { date, model: r.model || 'unknown', cwd: r.cwd || null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
       row.input += Math.max(0, (u.input_tokens || 0) - (u.cached_input_tokens || 0));
-      row.output += (u.output_tokens || 0) + (u.reasoning_output_tokens || 0);
+      row.output += u.output_tokens || 0; // reasoning_output_tokens 是 output_tokens 内部细分，不是额外一块，加了会重复计算（见 Pulse issue #30 上游澄清）
       row.cacheRead += u.cached_input_tokens || 0;
       row.cacheWrite += u.cache_write_input_tokens || 0;
     });
