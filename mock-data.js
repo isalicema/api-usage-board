@@ -25,6 +25,12 @@ export const CHANNELS = [
   { id: 'codex',    name: 'Codex',       color: '#b78cff' },
   { id: 'kimi',     name: 'Kimi Code',   color: '#22d3ee' },
   { id: 'deepseek', name: 'DeepSeek',    color: '#34d399' },
+  // 以下按真实 server 渠道顺序追加（Cursor 无 token 序列，不进 mock）；rng 按顺序消耗，
+  // 追加在后不改变前 4 个渠道的既有示意数据
+  { id: 'openrouter',  name: 'OpenRouter',  color: '#f59e0b' },
+  { id: 'grok',        name: 'Grok',        color: '#f472b6' },
+  { id: 'antigravity', name: 'Antigravity', color: '#fb7185' },
+  { id: 'gemini',      name: 'Gemini API',  color: '#ffc800' },
 ];
 
 const HOUR = 3600, DAY = 86400;
@@ -58,9 +64,32 @@ const QUOTA_BASE = {
     status: 'online', kind: 'balance',
     balance: { amount: 1037.84, currency: 'CNY' },
   },
+  openrouter: {
+    status: 'online', kind: 'balance',
+    balance: { amount: 42.17, currency: 'USD' },
+  },
+  grok: {
+    status: 'online', kind: 'windows',
+    windows: [
+      { label: '月账期', windowSec: 30 * DAY, usedPct: 34, timePct: 48, resetInSec: 15 * DAY + 6 * HOUR },
+    ],
+  },
+  antigravity: {
+    status: 'online', kind: 'windows',
+    windows: [
+      { label: 'Gemini 5小时',     windowSec: 5 * HOUR, usedPct: 12, timePct: 40, resetInSec: 3 * HOUR },
+      { label: 'Gemini 7天',       windowSec: 7 * DAY,  usedPct: 41, timePct: 57, resetInSec: 3 * DAY },
+      { label: 'Claude/GPT 5小时', windowSec: 5 * HOUR, usedPct: 58, timePct: 62, resetInSec: 1 * HOUR + 54 * 60 },
+      { label: 'Claude/GPT 7天',   windowSec: 7 * DAY,  usedPct: 70, timePct: 57, resetInSec: 3 * DAY },
+    ],
+  },
+  gemini: {
+    status: 'online', kind: 'usage', note: '无官方用量接口 · 读本地会话记录',
+    today: { tokens: 18.6e6, requests: 214 },
+  },
 };
 
-const LATENCY_BASE = { kimi: 182, claude: 246, codex: 211, deepseek: 328 };
+const LATENCY_BASE = { kimi: 182, claude: 246, codex: 211, deepseek: 328, openrouter: 297, grok: 264, antigravity: 38, gemini: 0 };
 
 // 每渠道的模型构成（份额），尾部小模型会被聚合为「其他 N 项」
 const MODEL_SPLIT = {
@@ -68,10 +97,14 @@ const MODEL_SPLIT = {
   codex:    [['gpt-5.6', 0.74], ['gpt-5.6-mini', 0.19], ['gpt-5.6-nano', 0.07]],
   kimi:     [['kimi-code/k3', 0.82], ['kimi-k2-thinking', 0.18]],
   deepseek: [['deepseek-v4', 0.91], ['deepseek-v4-flash', 0.09]],
+  openrouter:  [['qwen/qwen3-coder', 0.58], ['z-ai/glm-5', 0.42]],
+  grok:        [['grok-code-fast-2', 0.77], ['grok-5', 0.23]],
+  antigravity: [['gemini-3.8-flash', 0.55], ['claude-sonnet-5', 0.45]],
+  gemini:      [['gemini-3.8-flash', 0.64], ['gemini-3.1-pro-preview', 0.36]],
 };
 
 // 估值单价（$/M tokens，粗略均值），仅用于「等效估值」小结
-const PRICE_PER_M = { claude: 4.5, codex: 2.8, kimi: 0.9, deepseek: 0.4 };
+const PRICE_PER_M = { claude: 4.5, codex: 2.8, kimi: 0.9, deepseek: 0.4, openrouter: 1.0, grok: 1.5, antigravity: 0.5, gemini: 1.2 };
 
 // 项目维度 mock（示意用，纯虚构名字，不对应任何真实目录）
 const MOCK_PROJECTS = [
@@ -79,8 +112,9 @@ const MOCK_PROJECTS = [
   { project: 'internal-tool', path: '~/Code/internal-tool', tokens: 2.3e9, byChannel: { codex: 1.8e9, kimi: 5e8 } },
   { project: 'demo-app', path: '~/Code/demo-app', tokens: 1.4e9, byChannel: { claude: 1.1e9, deepseek: 3e8 },
     mergedFrom: ['~/Code/demo-app-old', '~/Code/demo-app'] }, // 示意「已合并 N 个目录」标记
-  { project: 'notes-sync', path: '~/Code/notes-sync', tokens: 6.2e8, byChannel: { kimi: 6.2e8 } },
+  { project: 'notes-sync', path: '~/Code/notes-sync', tokens: 6.2e8, byChannel: { kimi: 4.1e8, antigravity: 2.1e8 } },
   { project: 'sandbox', path: '~/Code/sandbox', tokens: 2.1e8, byChannel: { claude: 2.1e8 } },
+  { project: 'data-pipeline', path: '~/Code/data-pipeline', tokens: 1.3e8, byChannel: { gemini: 1.3e8 } },
 ];
 
 // 套餐 mock（仅作展示；真实数据由 server/config.json 的 subscriptions 决定）
@@ -88,6 +122,8 @@ const MOCK_SUBSCRIPTIONS = {
   claude: { plan: 'Pro', monthly: 20, currency: 'USD' },
   codex: { plan: 'Pro', monthly: 200, currency: 'USD' },
   kimi: { plan: '会员', monthly: 199, currency: 'CNY' },
+  grok: { plan: 'SuperGrok', monthly: 30, currency: 'USD' },
+  antigravity: { plan: 'AI Pro', monthly: 19.99, currency: 'USD' },
 };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -108,7 +144,7 @@ export function createMockSource() {
     const auth = {}, cache = {};
     for (const ch of CHANNELS) {
       auth[ch.id] = []; cache[ch.id] = [];
-      const base0 = { claude: 3.2e8, codex: 2.4e8, kimi: 1.6e8, deepseek: 0.9e8 }[ch.id];
+      const base0 = { claude: 3.2e8, codex: 2.4e8, kimi: 1.6e8, deepseek: 0.9e8, openrouter: 0.4e8, grok: 0.3e8, antigravity: 0.7e8, gemini: 0.5e8 }[ch.id];
       for (let d = 0; d < days + endOffset; d++) {
         const seasonal = 0.75 + 0.5 * Math.sin(d / 3.1 + ch.id.length);
         const growth = 1 + d * 0.012;
@@ -135,6 +171,11 @@ export function createMockSource() {
       const jitter = t === 0 ? 0 : 1; // 首轮无抖动
       const channels = CHANNELS.map((ch) => {
         const b = QUOTA_BASE[ch.id];
+        if (b.kind === 'usage') {
+          const add = jitter ? Math.round(rng() * 2e5) : 0;
+          return { id: ch.id, name: ch.name, status: b.status, kind: 'usage', note: b.note,
+            today: { tokens: b.today.tokens + add, requests: b.today.requests + (jitter ? 1 : 0) } };
+        }
         if (b.kind === 'balance') {
           const spend = jitter ? +(rng() * 0.4).toFixed(2) : 0;
           return {
@@ -221,9 +262,13 @@ export function createMockSource() {
     async fetchCostSummary({ days = 30 } = {}) {
       const cnyUsdRate = 7.2;
       const channels = CHANNELS.map((ch) => {
-        const base = { claude: 4700, codex: 3300, kimi: 40, deepseek: 60 }[ch.id];
-        if (ch.id === 'deepseek') {
-          return { id: ch.id, name: ch.name, equivUSD: base, subscription: null, roi: null, note: '按量计费 · 示意', priced: true };
+        const base = { claude: 4700, codex: 3300, kimi: 40, deepseek: 60, openrouter: 38, grok: 120, antigravity: 210, gemini: 85 }[ch.id];
+        if (ch.id === 'openrouter') {
+          return { id: ch.id, name: ch.name, actualUSD: base, subscription: null, roi: null, note: '按量计费 · 真实花费', priced: true };
+        }
+        if (ch.id === 'deepseek' || ch.id === 'gemini') {
+          const note = ch.id === 'gemini' ? '按量计费 · 刊例价估算' : '按量计费 · 示意';
+          return { id: ch.id, name: ch.name, equivUSD: base, subscription: null, roi: null, note, priced: true };
         }
         const equivUSD = base;
         const sub = MOCK_SUBSCRIPTIONS[ch.id];
@@ -237,7 +282,7 @@ export function createMockSource() {
           priced: true,
         };
       });
-      const totalEquiv = channels.reduce((s, c) => s + c.equivUSD, 0);
+      const totalEquiv = channels.reduce((s, c) => s + (c.equivUSD || c.actualUSD || 0), 0);
       const totalMonthly = channels.reduce((s, c) => s + (c.subscription?.monthlyUSD || 0), 0) * (days / 30);
       return {
         days, cnyUsdRate, channels,
@@ -258,7 +303,7 @@ export function createMockSource() {
         channels: CHANNELS.map((ch) => ({
           id: ch.id, name: ch.name,
           state: 'operational',
-          latencyMs: LATENCY_BASE[ch.id] + (jitter ? Math.round(rng() * 30 - 15) : 0),
+          latencyMs: LATENCY_BASE[ch.id] && jitter ? LATENCY_BASE[ch.id] + Math.round(rng() * 30 - 15) : LATENCY_BASE[ch.id], // 0 = 无接口可测（Gemini 读本地文件），不加抖动
         })),
       };
     },

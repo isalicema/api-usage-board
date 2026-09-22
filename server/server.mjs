@@ -15,6 +15,7 @@ import { createOpenrouterAdapter } from './adapters/openrouter.mjs';
 import { createGrokAdapter } from './adapters/grok.mjs';
 import { createCursorAdapter } from './adapters/cursor.mjs';
 import { createAntigravityAdapter } from './adapters/antigravity.mjs';
+import { createGeminiAdapter } from './adapters/gemini.mjs';
 
 const MODULE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const PORT = Number(process.env.PORT) || 8177;
@@ -28,6 +29,7 @@ const adapters = [
   createGrokAdapter(),
   createCursorAdapter(),
   createAntigravityAdapter(),
+  createGeminiAdapter(),
 ];
 
 // 启动即后台预热（首次 ccusage/全量扫描很慢，预热期间渠道返回 offline/暂缺，不阻塞响应）
@@ -62,7 +64,7 @@ async function apiStatus() {
 }
 
 // 估值单价（$/M tokens，粗略均值；订阅渠道仅作参考，非订阅账单）
-const PRICE_PER_M = { claude: 4.5, codex: 2.8, kimi: 0.9, deepseek: 0.4, grok: 1.5, antigravity: 0.5 };
+const PRICE_PER_M = { claude: 4.5, codex: 2.8, kimi: 0.9, deepseek: 0.4, grok: 1.5, antigravity: 0.5, gemini: 1.2 };
 
 function localDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -284,7 +286,7 @@ async function apiCostSummary({ days }) {
         .sort((x, y) => y.cost - x.cost).slice(0, 5),
       subscription: sub ? { ...sub, monthlyUSD: Math.round(monthlyUSD * 100) / 100 } : null,
       roi: sub && monthlyUSD > 0 ? Math.round((equiv / periodCost) * 10) / 10 : null,
-      note: a.id === 'grok' ? '近似口径（上下文快照）' : a.id === 'deepseek' ? '按量计费 · 实付以余额扣减（CNY）为准' : undefined,
+      note: a.id === 'grok' ? '近似口径（上下文快照）' : a.id === 'deepseek' ? '按量计费 · 实付以余额扣减（CNY）为准' : a.id === 'gemini' ? '按量计费 · 刊例价估算' : undefined,
       priced: allPriced,
     };
   });

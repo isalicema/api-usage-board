@@ -128,6 +128,8 @@ const CH_ICONS = {
   grok: { c: null, svg: '<path fill="currentColor" d="M4.5 5h3.4l4.1 5.6L16.1 5h3.4l-5.7 7.6 6.2 6.9h-3.4l-4.6-6.2-4.6 6.2H4l6.2-8.3z"/>' },
   cursor: { c: null, svg: '<path fill="currentColor" d="M5.5 3.2 19.5 11l-6.5 1.4 2.6 6.4-2.7 1.1-2.6-6.4-4.8 3.3z"/>' },
   antigravity: { c: '#8ab4f8', svg: '<path fill="currentColor" d="M12 2.8l2.3 6.9 6.9 2.3-6.9 2.3L12 21.2l-2.3-6.9-6.9-2.3 6.9-2.3z"/>' },
+  // Gemini 火花：凹边四芒星（Q 控制点拉向中心形成内凹边），与 antigravity 的直边星区分
+  gemini: { c: '#ffc800', svg: '<path fill="currentColor" d="M12 2.5Q13 11 21.5 12Q13 13 12 21.5Q11 13 2.5 12Q11 11 12 2.5Z"/>' },
 };
 const chIconColor = (id, light) => CH_ICONS[id]?.c || (light ? '#1c2033' : '#e8eaf4');
 
@@ -266,7 +268,9 @@ function appendHistory() {
   for (const ch of state.quota.channels) {
     quotaSnap.channels[ch.id] = ch.kind === 'balance'
       ? { balance: ch.balance?.amount ?? null }
-      : Object.fromEntries((ch.windows || []).map((w) => [w.label, w.usedPct]));
+      : ch.kind === 'usage'
+        ? { todayTokens: ch.today?.tokens ?? null }
+        : Object.fromEntries((ch.windows || []).map((w) => [w.label, w.usedPct]));
   }
   const qi = qh.findIndex((r) => r.date === day);
   if (qi >= 0) qh[qi] = quotaSnap; else qh.push(quotaSnap);
@@ -380,6 +384,8 @@ function renderQuota() {
       chip = el('span', 'q-chip warn', `${ch.name} 数据滞后`);
     } else if (ch.kind === 'balance') {
       chip = el('span', 'q-chip ok', `${ch.name} ${curSym(ch.balance?.currency)}${Math.floor(ch.balance?.amount ?? 0)}`);
+    } else if (ch.kind === 'usage') {
+      chip = el('span', 'q-chip ok', `${ch.name} 今日 ${fmtTokens(ch.today?.tokens ?? 0)}`);
     } else {
       const w = worstWindow(ch);
       // 窗口制但暂无可量化窗口（如 grok free 档 usedPct=null）——worstWindow 返回 null，必须兜底
@@ -430,6 +436,16 @@ function renderQuota() {
         block.appendChild(line);
       }
       if (ch.extra) block.appendChild(el('div', 'ch-sub', ch.extra));
+    } else if (ch.kind === 'usage') {
+      // 按量统计（Gemini API：无官方配额/余额接口，只显示今日已用，不伪造配额条）
+      const subText = ch.note ? `按量统计 · ${ch.note}` : '按量统计';
+      block.appendChild(el('div', 'ch-sub' + (ch.status === 'unconfigured' ? ' warn' : ''), subText));
+      if (ch.today) {
+        const line = el('div', 'balance-line');
+        line.appendChild(el('span', 'cur', '今日'));
+        line.appendChild(document.createTextNode(`${fmtTokens(ch.today.tokens)} tokens · ${fmtNum(ch.today.requests)} 次`));
+        block.appendChild(line);
+      }
     } else {
       // 副标题：取用量最高的窗口描述状态；渠道可带 note（如 Claude「限额为 ccusage 估算」）
       const w = worstWindow(ch);
@@ -815,11 +831,11 @@ function renderHbars(rootSel, rows, colorOf, base = null) {
   }
 }
 
-// 通用「topN 横条 + 其他 N 项抽屉」渲染（模型/项目面板共用）
-function renderBarsWithDrawer(rootSel, rows, drawerOpen, onToggle) {
+// 通用「topN 横条 + 其他 N 项抽屉」渲染（模型/项目面板共用；模型面板传 TOP=7 与左侧
+// Coding Agent 8 行对齐——Gemini 渠道加入后左侧多了一行）
+function renderBarsWithDrawer(rootSel, rows, drawerOpen, onToggle, TOP = 6) {
   const root = $(rootSel);
   root.innerHTML = '';
-  const TOP = 6;
   const top = rows.slice(0, TOP);
   const rest = rows.slice(TOP);
   const base = {
@@ -867,7 +883,7 @@ function renderDuoPanels() {
   renderBarsWithDrawer('#model-bars',
     d.models.map((m) => ({ name: m.name, tokens: m.tokens, color: colorOf(m) })),
     state.modelDrawerOpen,
-    () => { state.modelDrawerOpen = !state.modelDrawerOpen; renderDuoPanels(); });
+    () => { state.modelDrawerOpen = !state.modelDrawerOpen; renderDuoPanels(); }, 7);
 }
 
 // 项目面板：按工作目录聚合（OpenRouter 无项目维度，server 侧已排除）
