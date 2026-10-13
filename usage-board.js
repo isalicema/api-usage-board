@@ -579,8 +579,9 @@ function tipHtml(date, rows) {
   const total = rows.reduce((s, r) => s + r.tokens, 0);
   let h = `<div class="tip-date">${date}</div><div class="tip-total">共 ${fmtTokens(total)}</div>`;
   for (const r of rows) {
+    // est：该渠道的 token 是估算值（如 Grok Bot 的会话文本估算），悬浮时在数值后标「（估算）」
     h += `<div class="tip-row"><span class="tip-dot" style="background:${r.color}"></span>` +
-      `<span class="tip-name">${r.name}</span><span class="tip-val">${fmtTokens(r.tokens)}</span></div>`;
+      `<span class="tip-name">${r.name}</span><span class="tip-val">${fmtTokens(r.tokens)}${r.est ? '（估算）' : ''}</span></div>`;
   }
   return h;
 }
@@ -1656,7 +1657,7 @@ trendCanvas.addEventListener('mousemove', (e) => {
   if (!b) { hideTip(); return; }
   const d = state.token;
   const rows = d.channels
-    .map((c) => ({ color: c.color, name: c.name, tokens: c.daily[b.i] }))
+    .map((c) => ({ color: c.color, name: c.name, tokens: c.daily[b.i], est: !!c.tag }))
     .filter((r) => r.tokens > 0)
     .sort((a, z) => z.tokens - a.tokens);
   showTip(tipHtml(d.dates[b.i], rows), e.clientX, e.clientY);
