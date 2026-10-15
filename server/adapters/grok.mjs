@@ -1,7 +1,9 @@
 // adapters/grok.mjs — Grok Build 渠道（Grok CLI / SuperGrok 额度；id 仍为 grok，不是 Cursor 里的 Grok Bot）
 // 配额直连：GET https://cli-chat-proxy.grok.com/v1/billing?format=credits
 //   （Bearer = ~/.grok/auth.json 的 entry.key JWT；只读不刷新——xAI 轮换 refresh token，
-//   多客户端刷新会互顶）。creditUsagePercent 为 0 时字段省略，防御性解析。
+//   多客户端刷新会互顶）。creditUsagePercent 为 0 时字段省略（proto3 隐式存在）：用 /v1/settings 的
+//   subscription_tier_display 区分「付费档 0%」与「免费档」——付费档且账单周期正在进行 → 缺省按 0% 显示；
+//   免费档才走下面的 429 日志近似。请求带 x-xai-token-auth: xai-grok-cli（CLI 自己的头，缺它同一路径可能返回企业额度表单）。
 //   兜底：直连失败读 ~/.grok/logs/unified.jsonl 最新「billing: fetched credits config」。
 // Token 序列：~/.grok/sessions/*/*/updates.jsonl 的 params._meta.totalTokens。
 //   语义实测（2026-08-19）：是上下文体积快照——每轮内随流式增长、跨轮回落（非单调），
@@ -28,6 +30,22 @@ function readToken() {
     }
   } catch {}
   return null;
+}
+
+// 本机令牌状态：auth.json 里的 expires_at 已过 → 'expired'。Grok 令牌约 6 小时有效，由 CLI 在使用时续期；
+// 过期的令牌请求必然 401（或在网络不好时白等 12 秒超时），所以直接跳过，不再每轮浪费一次请求。
+export function localTokenState(authObj, now = Date.now()) {
+  if (!authObj) return 'none';
+  for (const k of Object.keys(authObj)) {
+    if (authObj[k] && authObj[k].key) {
+      const exp = Date.parse(authObj[k].expires_at);
+      return isFinite(exp) && exp < now ? 'expired' : 'ok';
+    }
+  }
+  return 'none';
+}
+function readAuthObj() {
+  try { return JSON.parse(fs.readFileSync(path.join(GROK_DIR, 'auth.json'), 'utf8')); } catch { return null; }
 }
 
 function mapConfig(config) {
@@ -81,31 +99,51 @@ function readFreeExhaustion() {
   return null;
 }
 
-async function fetchDirect() {
-  const token = readToken();
-  if (!token) throw new Error('no grok credentials');
-  const res = await fetch(BILLING_URL, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!res.ok) throw new Error(`grok billing HTTP ${res.status}`);
-  const j = await res.json();
-  if (!j.config) throw new Error('grok billing: no config');
-  if (j.config.creditUsagePercent != null) {
-    return { windows: [mapConfig(j.config)], source: 'direct' };
+const SETTINGS_URL = 'https://cli-chat-proxy.grok.com/v1/settings';
+const GROK_HDR = { 'x-xai-token-auth': 'xai-grok-cli' }; // CLI 自己带的头：缺它时同一路径可能返回企业额度表单
+
+// 账单 + 订阅档位 → 窗口。
+//   creditUsagePercent 有值 → 直接用；
+//   缺省：付费档（tier 非 free）且账单周期正在进行 → 0%（零值被省略）；周期已结束 → 暂缺（旧回复不代表新周期）；
+//   免费档/未知档位 → 保持原有口径（429 日志近似 / 暂缺）。
+export function interpretBilling(config, tier, now = Date.now(), freeFn = readFreeExhaustion) {
+  const tierNote = tier ? `${tier} 订阅` : undefined;
+  if (config.creditUsagePercent != null) return { windows: [mapConfig(config)], source: 'direct', note: tierNote };
+  const w = mapConfig(config);
+  const start = Date.parse(config.currentPeriod?.start), end = Date.parse(config.currentPeriod?.end);
+  const paid = !!tier && !/free/i.test(tier);
+  if (paid) {
+    if (isFinite(start) && isFinite(end) && now >= start && now <= end) return { windows: [w], source: 'direct', note: tierNote }; // usedPct 已是 0
+    w.usedPct = null;
+    return { windows: [w], source: 'direct', note: `${tierNote} · 账单周期已结束，等待客户端刷新` };
   }
   // free 档：billing 无配额字段 → 用 429 日志信号近似（见 readFreeExhaustion 注释）
-  const free = readFreeExhaustion();
-  const w = mapConfig(j.config);
+  const free = freeFn();
   if (free) {
     w.usedPct = free.usedPct;
     w.resetInSec = free.resetInSec;
     w.timePct = w.windowSec ? Math.min(100, Math.round((1 - free.resetInSec / 86400) * 100)) : null;
     return { windows: [w], source: 'direct+429log', note: `free 滚动 24h 额度（${fmtK(free.limit)} tok，来自 429 报错，接口未暴露正式配额）` };
   }
-  // free 且近期无用尽事件：接口确实没数据，如实标暂缺
+  // free/未知档位且近期无用尽事件：接口确实没数据，如实标暂缺
   w.usedPct = null;
   return { windows: [w], source: 'direct', note: 'free 额度接口未暴露，以客户端提示为准' };
+}
+
+async function fetchDirect() {
+  const token = readToken();
+  if (!token) throw new Error('no grok credentials');
+  const H = { Authorization: `Bearer ${token}`, ...GROK_HDR };
+  const res = await fetch(BILLING_URL, { headers: H, signal: AbortSignal.timeout(12_000) });
+  if (!res.ok) throw new Error(`grok billing HTTP ${res.status}`);
+  const j = await res.json();
+  if (!j.config) throw new Error('grok billing: no config');
+  let tier = null;
+  try {
+    const sres = await fetch(SETTINGS_URL, { headers: H, signal: AbortSignal.timeout(8_000) });
+    if (sres.ok) { const sj = await sres.json(); tier = sj.subscription_tier_display || sj.subscriptionTierDisplay || null; }
+  } catch { /* 档位取不到不致命：按未知档位处理 */ }
+  return interpretBilling(j.config, tier);
 }
 
 function fmtK(n) { return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n); }
@@ -125,6 +163,8 @@ function fetchFromLog() {
       const j = JSON.parse(lines[i]);
       const config = j.ctx?.config;
       if (config?.currentPeriod) {
+        const end = Date.parse(config.currentPeriod.end);
+        if (isFinite(end) && end < Date.now()) throw new Error('log config period ended'); // 已结束的周期不代表现在，不能当实时数据
         return { windows: [mapConfig(config)], source: 'log', note: '来自本地日志缓存' };
       }
     } catch { continue; }
@@ -204,14 +244,20 @@ function scan() {
   return Object.values(cache.rows);
 }
 
+// 配额降级链：直连（本机令牌有效才试）→ 日志兜底（仅当账单周期未结束）→ 抛错。
+// 令牌已过期/没有 → 不发必败的请求，直接走日志兜底；都没有时抛出能说明原因的错误。
+const defaultChainDeps = { authObj: readAuthObj, fetchDirect, fetchFromLog };
+export async function quotaChain(d = defaultChainDeps) {
+  let directErr = null;
+  const ls = localTokenState(d.authObj());
+  if (ls === 'ok') { try { return await d.fetchDirect(); } catch (e) { directErr = e; } }
+  else directErr = new Error(ls === 'expired' ? 'local grok token expired' : 'no grok credentials');
+  // 日志兜底失败时抛出直连的原始错误（401/无凭证/令牌过期），避免真实原因被掩盖
+  try { return d.fetchFromLog(); } catch { throw directErr; }
+}
+
 export function createGrokAdapter() {
-  const gate = staleGate(60_000, 30 * 60_000, async () => {
-    try { return await fetchDirect(); }
-    catch (e) {
-      // 日志兜底失败时抛出直连的原始错误（401/无凭证），避免真实原因被掩盖
-      try { return fetchFromLog(); } catch { throw e; }
-    }
-  });
+  const gate = staleGate(60_000, 30 * 60_000, () => quotaChain());
   const rowsCache = swr(5 * 60_000, async () => scan());
   let lastOk = 0, lastLatency = 0;
 
@@ -246,9 +292,10 @@ export function createGrokAdapter() {
 
 // 把底层错误翻译成可行动的提示（凭证相关优先，网络问题兜底）
 // 注：目录不存在的情况在 quota() 里已提前拦截为 unconfigured，这里只处理「装了但读失败」
-function offlineNote(e) {
+export function offlineNote(e) {
   const msg = e?.message || '';
   if (msg === 'no grok credentials') return '未登录 grok CLI（无有效凭证），客户端登录后自动采集';
+  if (msg === 'local grok token expired') return '令牌已过期（约 6 小时有效，由 Grok Build 在使用时续期），使用一次 Grok Build 即可恢复';
   const m = msg.match(/HTTP (\d+)/);
   if (m && (m[1] === '401' || m[1] === '403')) return '凭证已过期，在 Grok Build 客户端重新登录后自动恢复';
   if (m) return `billing 接口返回 HTTP ${m[1]}，重试中`;
