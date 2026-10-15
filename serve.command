@@ -32,7 +32,13 @@ if ! lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 && ! /usr/sbin/lsof -nP -
     done
     open "http://localhost:$PORT"
   ) &
-  exec "$NODE" server/server.mjs
+  # 服务日志落盘：快捷指令用 `nohup … >/dev/null` 启动时 stdout 会被丢弃，出问题就没有任何线索可查。
+  # 所以由脚本自己 tee 进文件——终端里照常能看到，文件里也留一份。超过 2MB 的旧日志启动时轮转成 server.log.1。
+  LOGDIR="$HOME/Library/Logs/api-usage-board"; LOG="$LOGDIR/server.log"
+  mkdir -p "$LOGDIR"
+  [ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 2097152 ] && mv -f "$LOG" "$LOG.1"
+  echo "===== $(date '+%F %T') 启动 =====" >> "$LOG"
+  "$NODE" server/server.mjs 2>&1 | tee -a "$LOG"
 else
   open "http://localhost:$PORT"
 fi

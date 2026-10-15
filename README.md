@@ -59,6 +59,12 @@ nohup "/path/to/api-usage-board/serve.command" >/dev/null 2>&1 &
 服务已经在跑的时候重复运行没关系，`serve.command` 会先探测 8177 端口，占用了就只打开
 浏览器页面，不会重复起一个 server。
 
+**服务日志**：`serve.command` 会把服务输出同时写进 `~/Library/Logs/api-usage-board/server.log`（超过 2MB 启动时轮转成 `server.log.1`），所以即使用上面的快捷指令后台启动，也能查到运行时的提示和错误：
+
+```bash
+tail -f ~/Library/Logs/api-usage-board/server.log
+```
+
 ## 功能一览
 
 - **Dashboard**：每渠道配额进度条 + 用尽预警横幅（按消耗速度外推还有多久用尽）+ 状态徽标
