@@ -65,6 +65,14 @@ nohup "/path/to/api-usage-board/serve.command" >/dev/null 2>&1 &
 tail -f ~/Library/Logs/api-usage-board/server.log
 ```
 
+**快捷指令偶发没唤起页面时**：上面命令把输出丢进了 `/dev/null`，脚本没跑起来和跑了但报错看起来一模一样。想留下排查线索，可以把命令末尾改成追加到一个启动日志：
+
+```bash
+nohup "/path/to/api-usage-board/serve.command" >> ~/Library/Logs/api-usage-board/launch.log 2>&1 &
+```
+
+之后再遇到没唤起：`launch.log` 没有新内容，说明快捷指令没执行到脚本；有内容，就是脚本跑了，看里面的报错。（服务运行时的输出仍在 `server.log`。）
+
 ## 功能一览
 
 - **Dashboard**：每渠道配额进度条 + 用尽预警横幅（按消耗速度外推还有多久用尽）+ 状态徽标
