@@ -75,7 +75,12 @@ QuotaDot（Claude/Codex 直连的出处）、CodexIsland、aiquokka、llmquota �
 
 - 每渠道 SWR 缓存：quota 60s；token 序列 5–10min；ccusage 10min。过期先返旧数据、后台异步刷新
 - codex/kimi/claude/grok 日志做**增量扫描**：按 path+size 记录解析 offset，持久化到
-  `server/.cache/*.json`（不进 git），滚动保留 45 天聚合。codex 单文件最大 500M+，分块（16MB）读取
+  `server/.cache/*.json`（不进 git），按各渠道的扫描窗口（95～110 天，`AUB_SCAN_DAYS` 可覆盖）滚动。codex 单文件最大 500M+，分块（16MB）读取；
+  `.jsonl.zst`（Codex 压缩的老会话）流式解压读取，解压总字节数必须等于 zstd 帧头声明的大小（Node 对被截断的 zstd 输入不报错、只少吐数据）
+- **历史归档** `server/history-archive.mjs`：窗口只管增量扫描，累计历史由归档保证只增不减。server 取行统一经 `channelRows()`，
+  对「归档 ∪ 当前扫描」按（日期，模型，目录…）逐字段取 max（幂等、不重复计数），仅早于今天 2 天的日期入档。
+  首次创建时同步把升级前的 `.cache/*-scan.json` 历史行收进来（必须在渠道改写缓存之前，所以 `createArchive` 在渠道创建前执行）
+- **缓存读写保护** `server/cache-util.mjs`：原子写、每日备份（留 7 份）、缩水过半先另存、读失败回退备份且不覆盖旧文件
 - 已知妥协：增量扫描是同步 fs，首轮会短暂阻塞 server 事件循环（秒级~十几秒，仅首次）
 
 ## 主题机制（dark / light）

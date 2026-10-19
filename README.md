@@ -88,6 +88,15 @@ nohup "/path/to/api-usage-board/serve.command" >> ~/Library/Logs/api-usage-board
 | `server/.env` | `OPENROUTER_MANAGEMENT_KEY=sk-or-...` | `cp server/.env.example server/.env` 后填真实 key，建议 `chmod 600 server/.env` |
 | `server/config.json` | `projectAliases` / `modelPrices` / `subscriptions` / `cnyUsdRate` | mtime 热加载，改完不用重启。`subscriptions` 可以在页面上选，不用手改文件；`projectAliases`/`modelPrices` 仍需手改，`modelPrices` 是占位刊例价，请按官方价格页核实 |
 
+## 历史数据保留
+
+各渠道只在最近 95～110 天的窗口里**扫描**日志，但累计用量不会随窗口滚动缩水：`server/history-archive.mjs` 会把每个渠道的每日用量永久归档到 `server/data/history-archive.json`（不进 git），之后展示的是「归档与当前扫描逐字段取较大值」——扫描窗口滚过去、日志被工具压缩/清理、扫描缓存被重置，已经归档的历史都还在。只增不减，且重复合并不会重复计数；只归档已稳定的日期（早于今天 2 天），近几天以当前扫描为准。
+
+- 升级前已经滚出窗口的历史，如果原始日志还在磁盘上（例如 Codex 的会话文件），先停掉看板服务，再用 `AUB_SCAN_DAYS=400 ./serve.command` 启动一次补回，之后归档会记住，不用一直开着。Claude Code 自己会清理 30 天前的本地日志，滚出去的部分无法补回，归档从升级那天起开始保护。
+- 想修正某天的归档（往下改，比如发现某天被重复计数）：先停服务，再 `node server/tools/archive.mjs drop <渠道> <YYYY-MM-DD>`，重启后该渠道重新扫出正确值。`node server/tools/archive.mjs stats` 查看各渠道归档范围。
+- 扫描缓存（`server/.cache/*.json`）也有保护：写入前每天留一份备份（`*.bak-YYYYMMDD`，保留 7 份），读失败不会被当成空缓存覆盖，内容突然缩水一半以上会先另存。
+- Codex 新版会把老会话压成 `.jsonl.zst`，现在可以直接读（按会话去重，压缩前后不会重复计数）。
+
 ## 已知限制
 
 - Claude/Codex 的配额直连走的是未公开接口（跟随官方客户端行为），可能随时漂移；都有降级链（直连失败→旧方案→offline），不会直接报错

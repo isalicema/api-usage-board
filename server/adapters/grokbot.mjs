@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { swr, staleGate } from '../ttl.mjs';
 import { localDate } from '../scan-util.mjs';
 import { readCursorAuth } from './cursor.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const HOME = os.homedir();
 const SAND_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus';
@@ -25,7 +26,7 @@ const GROKBOT_DIR = path.join(HOME, 'Library', 'Application Support', 'Grok Bot'
 const GROKBOT_DATA_DIR = path.join(GROKBOT_DIR, 'sand-client-persistence');
 const VSCDB = path.join(HOME, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
 const CACHE_FILE = fileURLToPath(new URL('../.cache/grokbot-scan.json', import.meta.url));
-const SCAN_DAYS = 95;
+const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 95;
 
 class AuthExpired extends Error {}
 class NotIncluded extends Error {}
@@ -209,7 +210,7 @@ function estimateTokens(text) {
 
 function loadCache() {
   try {
-    const c = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+    const c = readCacheJson(CACHE_FILE);
     if (c.v === 2 && c.files && c.daily && c.seenIds) return c;
   } catch {}
   return { v: 2, files: {}, seenIds: {}, seenReqs: {}, daily: {} };
@@ -218,7 +219,7 @@ function loadCache() {
 function saveCache(c) {
   try {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(CACHE_FILE, c);
   } catch {}
 }
 

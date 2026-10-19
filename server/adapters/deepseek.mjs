@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { swr } from '../ttl.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const execFileP = promisify(execFile);
 const HOME = os.homedir();
@@ -71,7 +72,7 @@ function decodeDshDir(p) {
 
 function loadScanCache() {
   try {
-    const c = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+    const c = readCacheJson(CACHE_FILE);
     if (c.v !== 2) throw new Error('v1→v2: rows 增加 cwd 维度，全量重扫');
     return c;
   } catch { return { v: 2, files: {} } };
@@ -79,7 +80,7 @@ function loadScanCache() {
 function saveScanCache(c) {
   try {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(CACHE_FILE, c);
   } catch {}
 }
 

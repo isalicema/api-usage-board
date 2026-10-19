@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { swr, staleGate } from '../ttl.mjs';
 import { localDate } from '../scan-util.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const HOME = os.homedir();
 const LOG_DIR = path.join(HOME, '.gemini', 'antigravity-cli', 'log');
@@ -19,7 +20,7 @@ const CONV_DIR = path.join(HOME, '.gemini', 'antigravity-cli', 'conversations');
 const BRAIN_DIR = path.join(HOME, '.gemini', 'antigravity-cli', 'brain');
 const CACHE_FILE = fileURLToPath(new URL('../.cache/antigravity-scan.json', import.meta.url));
 const SNAPSHOT_MAX_AGE = 24 * 3600_000;
-const SCAN_DAYS = 110;
+const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 110;
 
 function findPorts() {
   let files = [];
@@ -220,7 +221,7 @@ function readTranscriptInfo(cid) {
 
 function loadCache() {
   try {
-    const c = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+    const c = readCacheJson(CACHE_FILE);
     if (c.v === 1 && c.files && c.rows) return c;
   } catch {}
   return { v: 1, files: {}, rows: {} };
@@ -229,7 +230,7 @@ function loadCache() {
 function saveCache(c) {
   try {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(CACHE_FILE, c);
   } catch {}
 }
 

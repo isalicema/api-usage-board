@@ -10,13 +10,14 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { swr } from '../ttl.mjs';
 import { readNewLines, localDate } from '../scan-util.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const HOME = os.homedir();
 const KIMI_DIR = path.join(HOME, '.kimi-code');
 const SESSION_INDEX = path.join(KIMI_DIR, 'session_index.jsonl');
 const CACHE_FILE = fileURLToPath(new URL('../.cache/kimi-scan.json', import.meta.url));
 const USAGE_URL = 'https://api.kimi.com/coding/v1/usages';
-const SCAN_DAYS = 95; // 覆盖热力图 84 天 + 余量
+const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 95; // 覆盖热力图 84 天 + 余量
 
 function readAccessToken() {
   for (const p of [path.join(KIMI_DIR, 'credentials', 'kimi-code.json'), path.join(KIMI_DIR, 'oauth', 'kimi-code')]) {
@@ -107,7 +108,7 @@ function listWireFiles() {
 
 function loadScanCache() {
   try {
-    const c = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+    const c = readCacheJson(CACHE_FILE);
     if (c.v !== 2) throw new Error('v1→v2: rows 增加 cwd 维度，全量重扫');
     return c;
   } catch { return { v: 2, files: {}, rows: {} } };
@@ -115,7 +116,7 @@ function loadScanCache() {
 function saveScanCache(c) {
   try {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(CACHE_FILE, c);
   } catch {}
 }
 

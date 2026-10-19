@@ -15,6 +15,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { swr, staleGate } from '../ttl.mjs';
 import { readNewLines, localDate } from '../scan-util.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const execFileP = promisify(execFile);
 const NPX = path.join(path.dirname(process.execPath), 'npx');
@@ -102,7 +103,7 @@ async function runCcusage(...args) {
 // 过滤 model=="<synthetic>"。ccusage daily 仍保留给配额兜底/对比日志。
 const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const SCAN_CACHE_FILE = fileURLToPath(new URL('../.cache/claude-scan.json', import.meta.url));
-const SCAN_DAYS = 95; // 覆盖热力图 84 天 + 余量
+const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 95; // 覆盖热力图 84 天 + 余量
 
 // 历史回补：server/data/claude-feb-backfill.json（来源 ~/.claude/stats-cache.json，
 // 2 月 jsonl 已被 Claude Code 历史清理删掉，统计缓存是唯一幸存来源，详见文件内 _comment）。
@@ -117,7 +118,7 @@ function loadBackfillRows() {
 
 function loadLocalScan() {
   try {
-    const c = JSON.parse(fs.readFileSync(SCAN_CACHE_FILE, 'utf8'));
+    const c = readCacheJson(SCAN_CACHE_FILE);
     if (c.v !== 1) throw new Error('缓存无版本号：rows 曾被旧窗口裁掉，全量重扫');
     return c;
   } catch { return { v: 1, files: {}, rows: {} } };
@@ -125,7 +126,7 @@ function loadLocalScan() {
 function saveLocalScan(c) {
   try {
     fs.mkdirSync(path.dirname(SCAN_CACHE_FILE), { recursive: true });
-    fs.writeFileSync(SCAN_CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(SCAN_CACHE_FILE, c);
   } catch {}
 }
 

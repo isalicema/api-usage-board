@@ -15,12 +15,13 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { swr, staleGate } from '../ttl.mjs';
 import { readNewLines, localDate } from '../scan-util.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const HOME = os.homedir();
 const GROK_DIR = path.join(HOME, '.grok');
 const CACHE_FILE = fileURLToPath(new URL('../.cache/grok-scan.json', import.meta.url));
 const BILLING_URL = 'https://cli-chat-proxy.grok.com/v1/billing?format=credits';
-const SCAN_DAYS = 95; // 覆盖热力图 84 天 + 余量
+const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 95; // 覆盖热力图 84 天 + 余量
 
 function readToken() {
   try {
@@ -176,7 +177,7 @@ function fetchFromLog() {
 function scan() {
   const cache = (() => {
     try {
-      const c = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+      const c = readCacheJson(CACHE_FILE);
       if (c.v !== 2) throw new Error('v1→v2: rows 增加 cwd 维度，全量重扫');
       return c;
     } catch { return { v: 2, files: {}, rows: {} }; }
@@ -239,7 +240,7 @@ function scan() {
   for (const p of Object.keys(cache.files)) if (!files.some((f) => f.path === p)) delete cache.files[p];
   try {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(cache));
+    writeCacheJson(CACHE_FILE, cache);
   } catch {}
   return Object.values(cache.rows);
 }

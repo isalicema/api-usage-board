@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { swr } from '../ttl.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
 const CACHE_FILE = fileURLToPath(new URL('../.cache/openrouter-analytics.json', import.meta.url));
@@ -79,12 +80,12 @@ async function fetchQuotaRaw() {
 }
 
 function loadAnalyticsCache() {
-  try { return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); } catch { return { ts: 0, rows: [] }; }
+  try { return readCacheJson(CACHE_FILE); } catch { return { ts: 0, rows: [] }; }
 }
 function saveAnalyticsCache(c) {
   try {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(CACHE_FILE, c);
   } catch {}
 }
 

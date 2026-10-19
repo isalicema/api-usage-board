@@ -10,13 +10,16 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { swr, staleGate } from '../ttl.mjs';
 import { readNewLines, localDate } from '../scan-util.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const HOME = os.homedir();
 const SESSIONS = path.join(HOME, '.codex', 'sessions');
 const AUTH_FILE = path.join(HOME, '.codex', 'auth.json');
 const WHAM_URL = 'https://chatgpt.com/backend-api/wham/usage'; // 官方客户端行为，未公开接口，可能漂移
 const CACHE_FILE = fileURLToPath(new URL('../.cache/codex-scan.json', import.meta.url));
-const SCAN_DAYS = 110; // 覆盖到 2026-05-03（archived_sessions 最早）+ 热力图 84 天余量
+// 扫描窗口。更老的日期由 history-archive（只增不减的每日归档）保留，不靠加大这个数；
+// 想从仍在磁盘上的老会话补回已滚出窗口的历史：AUB_SCAN_DAYS=400 启动一次即可（归档会记住）。
+const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 110;
 const ARCHIVED = path.join(HOME, '.codex', 'archived_sessions'); // 扁平目录，文件名带日期
 
 // 测试钩子：AUB_TEST_CODEX_FAIL_AFTER=N 时第 N+1 次起配额查询必失败（wham+rollout 都断）
@@ -80,7 +83,8 @@ function listSessionFiles() {
   // 注意：截断必须按内容日期（目录/文件名里的日期），不能按 mtime——
   // 老会话文件不会再被 touch，mtime 截断会把 5/6 月的历史整批漏掉（修过的 bug）
   const push = (p, dateMs) => {
-    if (dateMs + 86400000 < cutoff) return; // 整天都早于窗口才跳
+    // 整天都早于窗口才跳；再留 14 天余量——跨午夜/跨多天的长会话按「开始日期」落在老目录里，但窗口内的事件仍要算
+    if (dateMs + 86400000 < cutoff - 14 * 86400000) return;
     try {
       const st = fs.statSync(p);
       out.push({ path: p, size: st.size, mtimeMs: st.mtimeMs });
@@ -102,7 +106,7 @@ function listSessionFiles() {
         let files = [];
         try { files = fs.readdirSync(dDir); } catch { continue; }
         for (const f of files) {
-          if (f.startsWith('rollout-') && f.endsWith('.jsonl')) push(path.join(dDir, f), dayMs);
+          if (f.startsWith('rollout-') && (f.endsWith('.jsonl') || f.endsWith('.jsonl.zst'))) push(path.join(dDir, f), dayMs);
         }
       }
     }
@@ -110,62 +114,148 @@ function listSessionFiles() {
   // archived_sessions：扁平目录，rollout-YYYY-MM-DDT… 文件名带日期
   try {
     for (const f of fs.readdirSync(ARCHIVED)) {
-      if (!f.startsWith('rollout-') || !f.endsWith('.jsonl')) continue;
+      if (!f.startsWith('rollout-') || !(f.endsWith('.jsonl') || f.endsWith('.jsonl.zst'))) continue;
       const m = f.match(/^rollout-(\d{4})-(\d{2})-(\d{2})/);
       if (m) push(path.join(ARCHIVED, f), Date.parse(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`));
     }
   } catch {}
-  return out.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  // 同一个会话可能同时有 .jsonl 和 .jsonl.zst（压缩中途/归档复制）：只留一份，优先未压缩的
+  const byKey = new Map();
+  for (const f of out) {
+    const k = sessionKey(f.path), cur = byKey.get(k);
+    if (!cur || (cur.path.endsWith('.zst') && !f.path.endsWith('.zst'))) byKey.set(k, f);
+  }
+  return [...byKey.values()].sort((a, b) => a.mtimeMs - b.mtimeMs);
 }
+
+// 会话身份 = 文件名去掉 .jsonl / .jsonl.zst。Codex 会把老会话原地压成 .zst 或挪进 archived_sessions，路径会变、身份不变
+const sessionKey = (p) => path.basename(p).replace(/\.jsonl(\.zst)?$/, '');
+
+// zstd 帧头里的「解压后总字节数」（Frame_Content_Size）。Node 的 zstd 解压遇到被截断的输入不会报错、只是少吐数据，
+// 所以必须拿它核对解压出的字节数，否则一个写到一半的 .zst 会被当成「已读完」永久少算。取不到（极少见）返回 null。
+function zstContentSize(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const b = Buffer.alloc(18); const n = fs.readSync(fd, b, 0, 18, 0);
+    if (n < 6 || b.readUInt32LE(0) !== 0xFD2FB528) return null;
+    const d = b[4], flag = d >> 6, single = (d >> 5) & 1;
+    let o = 5 + (single ? 0 : 1) + [0, 1, 2, 4][d & 3];
+    if (flag === 0) return single ? b[o] : null;
+    if (flag === 1) return b.readUInt16LE(o) + 256;
+    if (flag === 2) return b.readUInt32LE(o);
+    return Number(b.readBigUInt64LE(o));
+  } finally { fs.closeSync(fd); }
+}
+
+// 流式读 .zst：单个会话压缩后仍可达数百 MB（解压后数 GB），不能整个读进内存。
+// 从解压后的第 startByte 字节起，对每个完整行回调；返回解压后的总字节数；不完整的文件抛错。
+async function readZstLines(filePath, startByte, onLine) {
+  const { createZstdDecompress } = await import('node:zlib');
+  const { pipeline } = await import('node:stream/promises');
+  const expected = zstContentSize(filePath);
+  let pos = 0, carry = Buffer.alloc(0);
+  const sink = async function* (src) {
+    for await (const chunk of src) {
+      carry = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      let from = 0, idx;
+      while ((idx = carry.indexOf(10, from)) >= 0) {
+        if (pos + from >= startByte && idx > from) onLine(carry.toString('utf8', from, idx));
+        from = idx + 1;
+      }
+      pos += from; carry = from ? carry.subarray(from) : carry;
+    }
+  };
+  await pipeline(fs.createReadStream(filePath), createZstdDecompress(), sink);
+  if (carry.length && pos >= startByte) onLine(carry.toString('utf8')); // 末行没有换行
+  const total = pos + carry.length;
+  if (expected != null && total !== expected) throw new Error(`压缩文件不完整（解压 ${total} 字节，帧头声明 ${expected}）`);
+  return total;
+}
+
 
 function loadScanCache() {
   try {
-    const c = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-    if (c.v !== 3) throw new Error('v2→v3: 窗口扩到 110 天 + archived_sessions，全量重扫');
+    const c = readCacheJson(CACHE_FILE);
+    // v3→v4：开始读 .zst。v3 缓存里的行来自「当时还是 .jsonl、后来被压成 .zst」的会话，缓存里已没有它们的读取记录，
+    // 新代码会把这些 .zst 从头再读一遍 → 重复计数。所以旧缓存作废、按磁盘上的文件全量重建；
+    // 旧缓存里的历史行由 history-archive 在首次启动时先收进归档（见 seedFromCaches），不会丢。
+    if (c.v !== 4) throw new Error('v3→v4: 支持 .zst，全量重扫');
+    c.zdone ||= {};
     return c;
-  } catch { return { v: 3, files: {}, rows: {} } };
+  } catch { return { v: 4, files: {}, rows: {}, zdone: {} } };
 }
 function saveScanCache(c) {
   try {
-    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(CACHE_FILE, c);
   } catch {}
 }
 
-function scan() {
+// 一行 rollout → 累进 cache.rows。r 是该文件的解析上下文（turn_context 带出的 model/cwd 跨行、跨次保持）
+function ingest(r, line, cache, keepRowsAfter) {
+  if (!line.includes('token_count') && !line.includes('turn_context')) return;
+  let j;
+  try { j = JSON.parse(line); } catch { return; }
+  if (j.type === 'turn_context') { // payload 里同时带 model 和 cwd（实测字段名）
+    if (j.payload?.model) r.model = j.payload.model;
+    if (j.payload?.cwd) r.cwd = j.payload.cwd;
+    return;
+  }
+  if (j.type !== 'event_msg' || j.payload?.type !== 'token_count') return;
+  const u = j.payload.info?.last_token_usage;
+  if (!u || !j.timestamp) return;
+  const date = localDate(Date.parse(j.timestamp));
+  if (date < keepRowsAfter) return;
+  const key = `${date}|${r.model || 'unknown'}|${r.cwd || ''}`;
+  const row = cache.rows[key] || (cache.rows[key] = { date, model: r.model || 'unknown', cwd: r.cwd || null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  row.input += Math.max(0, (u.input_tokens || 0) - (u.cached_input_tokens || 0) - (u.cache_write_input_tokens || 0));
+  row.output += u.output_tokens || 0; // reasoning_output_tokens 是 output_tokens 内部细分，不是额外一块，加了会重复计算（见 Pulse issue #30 上游澄清）
+  row.cacheRead += u.cached_input_tokens || 0;
+  row.cacheWrite += u.cache_write_input_tokens || 0;
+}
+
+// 本机会话：.jsonl 按偏移增量读；.zst 是不可变的压缩副本，整份只读一次。
+// 会话在两次扫描之间被压缩时，.zst 要从原 .jsonl 记录的偏移接着读（按会话身份对上），否则会重复计数。
+async function scanLocal(cache, files, keepRowsAfter) {
+  const prior = new Map(); // 会话身份 → 旧路径（cache.files 里记着偏移的那条）
+  for (const p of Object.keys(cache.files)) prior.set(sessionKey(p), p);
+  for (const f of files) {
+    const key = sessionKey(f.path);
+    if (cache.zdone[key]) continue; // 这个会话已经整份读过（压缩副本），同名的任何文件都不再读，否则重复计数
+    const oldPath = prior.get(key);
+    if (f.path.endsWith('.zst')) {
+      const old = oldPath && oldPath !== f.path ? cache.files[oldPath] : null;
+      const r = old ? { ...old } : { offset: 0, size: 0, model: null, cwd: null };
+      const scratch = { rows: {} }; // 失败不能留下半截行：先读进临时表，整份读完才并入
+      try {
+        await readZstLines(f.path, r.offset || 0, (line) => ingest(r, line, scratch, keepRowsAfter));
+      } catch (e) { console.warn(`[codex] 读取压缩会话失败 ${path.basename(f.path)}：${e.message}，下轮重试`); continue; }
+      for (const [k, v] of Object.entries(scratch.rows)) {
+        const t = cache.rows[k] || (cache.rows[k] = { date: v.date, model: v.model, cwd: v.cwd, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+        for (const fld of ['input', 'output', 'cacheRead', 'cacheWrite']) t[fld] += v[fld];
+      }
+      cache.zdone[key] = 1;
+      if (oldPath && oldPath !== f.path) delete cache.files[oldPath];
+      continue;
+    }
+    let rec = cache.files[f.path];
+    if (!rec && oldPath && oldPath !== f.path && cache.files[oldPath]) { // 会话被挪了位置（sessions → archived_sessions）：沿用偏移，别重读
+      rec = cache.files[f.path] = cache.files[oldPath]; delete cache.files[oldPath];
+    }
+    const offset = rec && rec.size <= f.size ? rec.offset : 0; // 变小了视为重写，从头扫
+    if (offset >= f.size) { if (rec) rec.size = f.size; continue; }
+    const r = rec || (cache.files[f.path] = { offset: 0, size: 0, model: null, cwd: null });
+    r.offset = readNewLines(f.path, offset, (line) => ingest(r, line, cache, keepRowsAfter));
+    r.size = f.size;
+  }
+}
+
+async function scan() {
   const t0 = Date.now();
   const cache = loadScanCache();
   const files = listSessionFiles();
   const keepRowsAfter = localDate(Date.now() - SCAN_DAYS * 86400000);
 
-  for (const f of files) {
-    const rec = cache.files[f.path];
-    const offset = rec && rec.size <= f.size ? rec.offset : 0; // 变小了视为重写，从头扫
-    if (offset >= f.size) { if (rec) rec.size = f.size; continue; }
-    const r = rec || (cache.files[f.path] = { offset: 0, size: 0, model: null, cwd: null });
-    r.offset = readNewLines(f.path, offset, (line) => {
-      if (!line.includes('token_count') && !line.includes('turn_context')) return;
-      let j;
-      try { j = JSON.parse(line); } catch { return; }
-      if (j.type === 'turn_context') { // payload 里同时带 model 和 cwd（实测字段名）
-        if (j.payload?.model) r.model = j.payload.model;
-        if (j.payload?.cwd) r.cwd = j.payload.cwd;
-        return;
-      }
-      if (j.type !== 'event_msg' || j.payload?.type !== 'token_count') return;
-      const u = j.payload.info?.last_token_usage;
-      if (!u || !j.timestamp) return;
-      const date = localDate(Date.parse(j.timestamp));
-      if (date < keepRowsAfter) return;
-      const key = `${date}|${r.model || 'unknown'}|${r.cwd || ''}`;
-      const row = cache.rows[key] || (cache.rows[key] = { date, model: r.model || 'unknown', cwd: r.cwd || null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
-      row.input += Math.max(0, (u.input_tokens || 0) - (u.cached_input_tokens || 0) - (u.cache_write_input_tokens || 0));
-      row.output += u.output_tokens || 0; // reasoning_output_tokens 是 output_tokens 内部细分，不是额外一块，加了会重复计算（见 Pulse issue #30 上游澄清）
-      row.cacheRead += u.cached_input_tokens || 0;
-      row.cacheWrite += u.cache_write_input_tokens || 0;
-    });
-    r.size = f.size;
-  }
+  await scanLocal(cache, files, keepRowsAfter);
 
   // 滚动清理
   for (const k of Object.keys(cache.rows)) if (cache.rows[k].date < keepRowsAfter) delete cache.rows[k];
@@ -260,3 +350,5 @@ export function createCodexAdapter() {
     },
   };
 }
+
+export { listSessionFiles as _listSessionFiles, scanLocal as _scanLocal, readZstLines as _readZstLines, sessionKey as _sessionKey };

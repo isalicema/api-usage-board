@@ -16,10 +16,15 @@ import { createGrokAdapter } from './adapters/grok.mjs';
 import { createCursorAdapter } from './adapters/cursor.mjs';
 import { createGrokBotAdapter } from './adapters/grokbot.mjs';
 import { createAntigravityAdapter } from './adapters/antigravity.mjs';
+import { createArchive } from './history-archive.mjs';
 import { createGeminiAdapter } from './adapters/gemini.mjs';
 
 const MODULE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const PORT = Number(process.env.PORT) || 8177;
+
+// 每日用量永久归档：渠道只保留最近 N 天，更老的日期靠归档补回，累计不会随窗口滚动缩水（见 history-archive.mjs）
+const archive = createArchive();
+const channelRows = (a) => guard(() => a.usageRows(), [], 60_000).then((rows) => archive.merge(a.id, rows));
 
 const adapters = [
   createClaudeAdapter(),
@@ -75,7 +80,7 @@ function localDateStr(d) {
 async function apiTokenSeries({ days, endOffset, metric }) {
   // tokenData:false 的渠道（Cursor，无本地 token 序列）不进趋势/分布
   const seriesAdapters = adapters.filter((a) => a.tokenData !== false);
-  const rowsByChannel = await Promise.all(seriesAdapters.map((a) => guard(() => a.usageRows(), [], 60_000)));
+  const rowsByChannel = await Promise.all(seriesAdapters.map((a) => channelRows(a)));
 
   // 日期轴：本地日期，endOffset=1 时窗口整体向前挪一天（「昨日」视图）
   const dates = [];
@@ -211,7 +216,7 @@ function readJsonBody(req, maxBytes = 4096) {
 async function apiByProject({ days, endOffset, metric }) {
   const aliases = loadConfig().projectAliases || {};
   const seriesAdapters = adapters.filter((a) => a.tokenData !== false && a.id !== 'openrouter');
-  const rowsByChannel = await Promise.all(seriesAdapters.map((a) => guard(() => a.usageRows(), [], 60_000)));
+  const rowsByChannel = await Promise.all(seriesAdapters.map((a) => channelRows(a)));
   const dates = new Set();
   const today = new Date();
   for (let i = days - 1 + endOffset; i >= endOffset; i--) {
@@ -262,7 +267,7 @@ async function apiCostSummary({ days }) {
   const cnyUsdRate = cfg.cnyUsdRate || 7.2;
   const defPrice = prices._default || { input: 2, output: 8, cacheRead: 0.2, cacheWrite: 2 };
   const seriesAdapters = adapters.filter((a) => a.tokenData !== false && a.costData !== false);
-  const rowsByChannel = await Promise.all(seriesAdapters.map((a) => guard(() => a.usageRows(), [], 60_000)));
+  const rowsByChannel = await Promise.all(seriesAdapters.map((a) => channelRows(a)));
   const dates = new Set();
   const today = new Date();
   for (let i = days - 1; i >= 0; i--) {

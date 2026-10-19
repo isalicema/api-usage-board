@@ -26,10 +26,11 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { swr } from '../ttl.mjs';
 import { readNewLines, localDate } from '../scan-util.mjs';
+import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const HOME = os.homedir();
 const CACHE_FILE = fileURLToPath(new URL('../.cache/gemini-scan.json', import.meta.url));
-const SCAN_DAYS = 95; // 覆盖热力图 84 天 + 余量
+const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 95; // 覆盖热力图 84 天 + 余量
 const OC_PROVIDERS = ['google', 'google-vertex'];
 
 function geminiRuntimeDirs() {
@@ -97,7 +98,7 @@ function cliMsg(j, cwd) {
 
 function loadScanCache() {
   try {
-    const c = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+    const c = readCacheJson(CACHE_FILE);
     if (c.v !== 1) throw new Error('version');
     return c;
   } catch { return { v: 1, files: {} }; }
@@ -105,7 +106,7 @@ function loadScanCache() {
 function saveScanCache(c) {
   try {
     fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(c));
+    writeCacheJson(CACHE_FILE, c);
   } catch {}
 }
 
