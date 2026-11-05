@@ -4,3 +4,6 @@ server/.cache/
 .DS_Store
 node_modules/
 server/data/
+
+# Local project ledger; never commit or publish.
+[Pp][Rr][Oo][Jj][Ee][Cc][Tt].[Mm][Dd]
