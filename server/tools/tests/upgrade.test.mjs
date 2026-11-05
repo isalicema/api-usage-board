@@ -34,7 +34,7 @@ const rows = archive.merge('codex', await adapter.usageRows());
 assert.equal(byDay(rows, OLD), 1000, 'X 被压成 .zst 后不重复计数（旧缓存作废、全量重建，且与归档取较大值）');
 assert.equal(byDay(rows, d(20)), 7777, '磁盘上已不存在的会话 Y，历史从旧缓存收进归档，没丢');
 assert.equal(byDay(rows, RECENT), 200, '新会话照常');
-assert.equal(JSON.parse(fs.readFileSync(OLDCACHE, 'utf8')).v, 4, '缓存升到 v4');
+assert.equal(JSON.parse(fs.readFileSync(OLDCACHE, 'utf8')).v, 5, '缓存升到 v5');
 const again = archive.merge('codex', await adapter.usageRows()); assert.equal(tot(again), tot(rows), '再扫一遍不变');
 fs.rmSync(T, { recursive: true, force: true });
 console.log('升级路径测试通过: 压成 .zst 的会话不重复计数/已删除会话的历史进归档不丢/缓存升 v4/重复扫描不变');

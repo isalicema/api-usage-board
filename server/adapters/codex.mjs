@@ -179,10 +179,10 @@ function loadScanCache() {
     // v3→v4：开始读 .zst。v3 缓存里的行来自「当时还是 .jsonl、后来被压成 .zst」的会话，缓存里已没有它们的读取记录，
     // 新代码会把这些 .zst 从头再读一遍 → 重复计数。所以旧缓存作废、按磁盘上的文件全量重建；
     // 旧缓存里的历史行由 history-archive 在首次启动时先收进归档（见 seedFromCaches），不会丢。
-    if (c.v !== 4) throw new Error('v3→v4: 支持 .zst，全量重扫');
+    if (c.v !== 5) throw new Error('v4→v5: zdone 记录解压后字节数（会话压缩后被恢复继续写入时要接着读），全量重扫');
     c.zdone ||= {};
     return c;
-  } catch { return { v: 4, files: {}, rows: {}, zdone: {} } };
+  } catch { return { v: 5, files: {}, rows: {}, zdone: {} } };
 }
 function saveScanCache(c) {
   try {
@@ -213,6 +213,21 @@ function ingest(r, line, cache, keepRowsAfter) {
   row.cacheWrite += u.cache_write_input_tokens || 0;
 }
 
+// 从文件前 endByte 字节里找最后一个 turn_context（取 model/cwd）；只读末尾最多 4MB，找不到就返回空
+function lastContext(filePath, endByte) {
+  let fd; try { fd = fs.openSync(filePath, 'r'); } catch { return {}; }
+  try {
+    const len = Math.min(4 << 20, endByte), buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, endByte - len);
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].includes('turn_context')) continue;
+      try { const j = JSON.parse(lines[i]); if (j.type === 'turn_context') return { model: j.payload?.model || null, cwd: j.payload?.cwd || null }; } catch { /* 可能是被截断的首行 */ }
+    }
+  } finally { try { fs.closeSync(fd); } catch {} }
+  return {};
+}
+
 // 本机会话：.jsonl 按偏移增量读；.zst 是不可变的压缩副本，整份只读一次。
 // 会话在两次扫描之间被压缩时，.zst 要从原 .jsonl 记录的偏移接着读（按会话身份对上），否则会重复计数。
 async function scanLocal(cache, files, keepRowsAfter) {
@@ -220,24 +235,33 @@ async function scanLocal(cache, files, keepRowsAfter) {
   for (const p of Object.keys(cache.files)) prior.set(sessionKey(p), p);
   for (const f of files) {
     const key = sessionKey(f.path);
-    if (cache.zdone[key]) continue; // 这个会话已经整份读过（压缩副本），同名的任何文件都不再读，否则重复计数
+    const zlen = cache.zdone[key]; // 这个会话以压缩副本整份读过时，解压后的总字节数
     const oldPath = prior.get(key);
     if (f.path.endsWith('.zst')) {
+      if (zlen) continue; // 压缩副本整份读过了
       const old = oldPath && oldPath !== f.path ? cache.files[oldPath] : null;
       const r = old ? { ...old } : { offset: 0, size: 0, model: null, cwd: null };
       const scratch = { rows: {} }; // 失败不能留下半截行：先读进临时表，整份读完才并入
+      let total = 0;
       try {
-        await readZstLines(f.path, r.offset || 0, (line) => ingest(r, line, scratch, keepRowsAfter));
+        total = await readZstLines(f.path, r.offset || 0, (line) => ingest(r, line, scratch, keepRowsAfter));
       } catch (e) { console.warn(`[codex] 读取压缩会话失败 ${path.basename(f.path)}：${e.message}，下轮重试`); continue; }
       for (const [k, v] of Object.entries(scratch.rows)) {
         const t = cache.rows[k] || (cache.rows[k] = { date: v.date, model: v.model, cwd: v.cwd, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
         for (const fld of ['input', 'output', 'cacheRead', 'cacheWrite']) t[fld] += v[fld];
       }
-      cache.zdone[key] = 1;
+      cache.zdone[key] = total || 1;
       if (oldPath && oldPath !== f.path) delete cache.files[oldPath];
       continue;
     }
     let rec = cache.files[f.path];
+    if (!rec && zlen > 1) {
+      // 这个会话曾被压成 .zst 并整份读过，现在又以 .jsonl 出现——被恢复继续使用了（Codex 会解压后接着往里写）。
+      // 压缩副本的内容就是现在文件的前 zlen 字节：从那里接着读，别重读也别跳过（跳过会漏掉恢复之后的全部新用量）
+      if (f.size < zlen) { console.warn(`[codex] ${path.basename(f.path)} 比压缩时还小，跳过`); continue; }
+      rec = cache.files[f.path] = { offset: zlen, size: zlen, model: null, cwd: null, ...lastContext(f.path, zlen) };
+      delete cache.zdone[key];
+    }
     if (!rec && oldPath && oldPath !== f.path && cache.files[oldPath]) { // 会话被挪了位置（sessions → archived_sessions）：沿用偏移，别重读
       rec = cache.files[f.path] = cache.files[oldPath]; delete cache.files[oldPath];
     }

@@ -12,7 +12,7 @@ const fresh=()=>({v:3,files:{},rows:{},zdone:{}}); const KEEP='2000-01-01';
 const KEY=`rollout-${TD.getFullYear()}-${pad(TD.getMonth()+1)}-${pad(TD.getDate())}T10-00-00-aaaa`;
 // 1) 仅有 .zst、缓存为空：整份读入（含跨块长行：每行 ~200KB > 流块）
 let c=fresh(); const p1=`${SES}/${KEY}.jsonl.zst`; fs.writeFileSync(p1,zlib.zstdCompressSync(Buffer.from(body([10,20,30,40],200_000))));
-await x._scanLocal(c,[st(p1)],KEEP); assert.equal(total(c),10+1+20+1+30+1+40+1); assert.equal(c.zdone[KEY],1);
+await x._scanLocal(c,[st(p1)],KEEP); assert.equal(total(c),10+1+20+1+30+1+40+1); assert.ok(c.zdone[KEY]>1,"zdone 记录解压后字节数");
 await x._scanLocal(c,[st(p1)],KEEP); assert.equal(total(c),104,'再扫一遍不重复');
 // 2) jsonl 读到一半，随后被压缩成 .zst（内容更长）：从原偏移接着读，总数 = 全文一次
 c=fresh(); const pj=`${SES}/${KEY}.jsonl`; fs.writeFileSync(pj,body([10,20])); await x._scanLocal(c,[st(pj)],KEEP); assert.equal(total(c),32);
@@ -34,4 +34,16 @@ fs.writeFileSync(p3,good); await x._scanLocal(c,[st(p3)],KEEP); assert.equal(tot
 fs.writeFileSync(`${SES}/${K3}.jsonl`,body([999])); await x._scanLocal(c,[st(`${SES}/${K3}.jsonl`)],KEEP); assert.equal(total(c),9,'zdone 的会话不再读同名文件');
 // 7) 无结尾换行的末行也读到
 c=fresh(); const K4=`rollout-${TD.getFullYear()}-${pad(TD.getMonth()+1)}-${pad(TD.getDate())}T13-00-00-dddd`; const p4=`${SES}/${K4}.jsonl.zst`; fs.writeFileSync(p4,zlib.zstdCompressSync(Buffer.from([ctx('m','/q'),tc(5)].join('\n')))); await x._scanLocal(c,[st(p4)],KEEP); assert.equal(total(c),6);
-fs.rmSync(HOME,{recursive:true,force:true}); console.log('Codex .zst 读取测试通过: 仅zst整读(含跨块长行)/压缩时从原偏移续读不重复/jsonl与zst并存只留jsonl/挪位置不重复/损坏不留半截可重试/已读过的会话不再读/无结尾换行');
+
+// 8) 压缩过的会话被恢复继续使用（Codex 解压回 .jsonl 并往里追加）：只补读追加的部分，不重读也不跳过；model/cwd 上下文沿用压缩前最后一个 turn_context
+c=fresh(); const K5=`rollout-${TD.getFullYear()}-${pad(TD.getMonth()+1)}-${pad(TD.getDate())}T14-00-00-eeee`;
+const base5=body([10,20]); const pz=`${SES}/${K5}.jsonl.zst`, pj5=`${SES}/${K5}.jsonl`;
+fs.writeFileSync(pz,zlib.zstdCompressSync(Buffer.from(base5))); await x._scanLocal(c,[st(pz)],KEEP); assert.equal(total(c),32); assert.equal(c.zdone[K5],Buffer.byteLength(base5),'zdone 记录解压后字节数');
+fs.unlinkSync(pz); fs.writeFileSync(pj5,base5+tc(30)+'\n'); await x._scanLocal(c,[st(pj5)],KEEP);
+assert.equal(total(c),32+31,'恢复后只补读追加的 30（+output 1），不重读压缩前的 20+10'); assert.ok(!c.zdone[K5],'zdone 已清，改走 .jsonl 增量');
+assert.ok(Object.values(c.rows).every((r)=>r.model==='gpt-t'&&r.cwd==='/p'),'恢复后的新事件沿用压缩前的 model/cwd，不落到 unknown');
+fs.appendFileSync(pj5,tc(40)+'\n'); await x._scanLocal(c,[st(pj5)],KEEP); assert.equal(total(c),32+31+41,'之后照常增量');
+// 8b) 再次被压缩：从 .jsonl 记录的偏移接着，不重复
+fs.unlinkSync(pj5); fs.writeFileSync(pz,zlib.zstdCompressSync(Buffer.from(base5+tc(30)+'\n'+tc(40)+'\n'+tc(50)+'\n'))); await x._scanLocal(c,[st(pz)],KEEP);
+assert.equal(total(c),32+31+41+51,'再次压缩只补新增的 50');
+fs.rmSync(HOME,{recursive:true,force:true}); console.log('Codex .zst 读取测试通过: 仅zst整读(含跨块长行)/压缩时从原偏移续读不重复/压缩后被恢复继续写只补读新增/jsonl与zst并存只留jsonl/挪位置不重复/损坏不留半截可重试/已读过的会话不再读/无结尾换行');
