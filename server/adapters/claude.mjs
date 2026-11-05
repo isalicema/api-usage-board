@@ -98,7 +98,7 @@ async function runCcusage(...args) {
   return JSON.parse(stdout);
 }
 
-// ---- Token 序列：本地扫描 ~/.claude/projects/*/\*.jsonl（带 cwd，供按项目统计）----
+// ---- Token 序列：本地扫描 ~/.claude/projects/*/*.jsonl 及 */*/subagents/*.jsonl（带 cwd，供按项目统计）----
 // 228M 全量首轮扫一次（分块读），之后增量；按 message.id 去重（流式分片重复），
 // 过滤 model=="<synthetic>"。ccusage daily 仍保留给配额兜底/对比日志。
 const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
@@ -138,14 +138,22 @@ function scanLocal() {
   try { projects = fs.readdirSync(CLAUDE_PROJECTS); } catch { projects = []; }
   for (const proj of projects) {
     let fs2 = [];
-    try { fs2 = fs.readdirSync(path.join(CLAUDE_PROJECTS, proj)); } catch { continue; }
-    for (const f of fs2) {
-      if (!f.endsWith('.jsonl')) continue;
-      const p = path.join(CLAUDE_PROJECTS, proj, f);
+    try { fs2 = fs.readdirSync(path.join(CLAUDE_PROJECTS, proj), { withFileTypes: true }); } catch { continue; }
+    const add = (p) => {
       try {
         const st = fs.statSync(p);
         if (st.mtimeMs >= cutoff) files.push({ path: p, size: st.size });
       } catch {}
+    };
+    for (const e of fs2) {
+      if (e.isFile() && e.name.endsWith('.jsonl')) add(path.join(CLAUDE_PROJECTS, proj, e.name));
+      // 子智能体（Explore / 搜网页等后台小模型）的日志在 <项目>/<会话id>/subagents/agent-*.jsonl，
+      // 是独立消耗，不会出现在主会话文件里（实测 message.id 不重叠），之前整体漏算
+      else if (e.isDirectory()) {
+        let subs = [];
+        try { subs = fs.readdirSync(path.join(CLAUDE_PROJECTS, proj, e.name, 'subagents')); } catch { continue; }
+        for (const f of subs) if (f.endsWith('.jsonl')) add(path.join(CLAUDE_PROJECTS, proj, e.name, 'subagents', f));
+      }
     }
   }
 
