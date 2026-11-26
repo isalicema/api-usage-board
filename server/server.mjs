@@ -35,7 +35,7 @@ const adapters = [
   createGrokAdapter(),
   createCursorAdapter(),
   createGrokBotAdapter(),
-  createAntigravityAdapter(),
+  createAntigravityAdapter({ archive }),
   createGeminiAdapter(),
 ];
 

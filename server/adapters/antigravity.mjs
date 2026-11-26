@@ -1,8 +1,9 @@
 // adapters/antigravity.mjs — Antigravity（agy）渠道：配额 + 本地 Token 序列
 // 配额：agy 运行时起本地 language server——从最新 cli-*.log 正则端口，POST RetrieveUserQuotaSummary。
 //       agy 不在跑 → dormant（灰 pill「未运行」，不进告警横幅）。
-// Token 序列：扫描 ~/.gemini/antigravity-cli/conversations/*.db 的 gen_metadata 表（protobuf 编码），
-//             结合 ~/.gemini/antigravity-cli/brain/<cid>/.system_generated/logs/transcript.jsonl
+// Token 序列：扫描 CLI（~/.gemini/antigravity-cli）与桌面客户端（~/.gemini/antigravity）两处
+//             conversations/*.db 的 gen_metadata 表（protobuf 编码），结合各自的
+//             brain/<cid>/.system_generated/logs/transcript.jsonl，
 //             提取各 turn 的 input / output / cacheRead token 及模型名称。
 //             增量缓存至 server/.cache/antigravity-scan.json。
 import fs from 'node:fs';
@@ -16,8 +17,7 @@ import { readCacheJson, writeCacheJson } from '../cache-util.mjs';
 
 const HOME = os.homedir();
 const LOG_DIR = path.join(HOME, '.gemini', 'antigravity-cli', 'log');
-const CONV_DIR = path.join(HOME, '.gemini', 'antigravity-cli', 'conversations');
-const BRAIN_DIR = path.join(HOME, '.gemini', 'antigravity-cli', 'brain');
+const SESSION_ROOTS = ['antigravity-cli', 'antigravity'].map((d) => path.join(HOME, '.gemini', d));
 const CACHE_FILE = fileURLToPath(new URL('../.cache/antigravity-scan.json', import.meta.url));
 const SNAPSHOT_MAX_AGE = 24 * 3600_000;
 const SCAN_DAYS = Number(process.env.AUB_SCAN_DAYS) || 110;
@@ -164,12 +164,39 @@ function parseTokensFromProto(buf) {
   return null;
 }
 
+// gen_metadata.idx 是「第几次生成」，transcript 的 step_index 是「第几步」，两套编号不对应。
+// 每条记录的顶层 field 2 是本次生成产出的步骤号列表（packed varint），取第一个去查时间。
+function firstStepIndex(buf) {
+  let pos = 0;
+  while (pos < buf.length) {
+    const [key, np] = parseVarint(buf, pos); pos = np;
+    const fnum = key >> 3, wire = key & 7;
+    if (wire === 0) { const [, n] = parseVarint(buf, pos); pos = n; }
+    else if (wire === 2) {
+      const [len, n] = parseVarint(buf, pos); pos = n;
+      if (fnum === 2 && len > 0) return parseVarint(buf, pos)[0];
+      pos += len;
+    } else break;
+  }
+  return null;
+}
+
+// 该步骤没有时间时往前找最近的一步。别轻易退回到文件修改时间：会话续聊后它会变，
+// 同一条记录换了日期，只增不减的历史归档就会两边各记一份。
+function stepDate(stepDates, step) {
+  for (let i = step; i != null && i >= 0; i--) {
+    const d = stepDates.get(i);
+    if (d) return d;
+  }
+  return null;
+}
+
 async function readDbEntries(dbPath) {
   const entries = [];
   try {
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(dbPath, { readOnly: true });
-    const rows = db.prepare('SELECT idx, data FROM gen_metadata').all();
+    const rows = db.prepare('SELECT idx, data FROM gen_metadata ORDER BY idx').all();
     for (const r of rows) {
       entries.push({ idx: r.idx, data: Buffer.from(r.data) });
     }
@@ -178,7 +205,7 @@ async function readDbEntries(dbPath) {
   } catch {}
 
   try {
-    const out = execFileSync('/usr/bin/sqlite3', [dbPath, 'SELECT idx, quote(data) FROM gen_metadata;'], {
+    const out = execFileSync('/usr/bin/sqlite3', [dbPath, 'SELECT idx, quote(data) FROM gen_metadata ORDER BY idx;'], {
       encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024 * 1024,
     });
     for (const line of out.trim().split('\n')) {
@@ -194,8 +221,8 @@ async function readDbEntries(dbPath) {
   return entries;
 }
 
-function readTranscriptInfo(cid) {
-  const tfile = path.join(BRAIN_DIR, cid, '.system_generated', 'logs', 'transcript.jsonl');
+function readTranscriptInfo(brainDir, cid) {
+  const tfile = path.join(brainDir, cid, '.system_generated', 'logs', 'transcript.jsonl');
   const stepDates = new Map();
   let cwd = null;
   if (!fs.existsSync(tfile)) return { stepDates, cwd };
@@ -222,9 +249,16 @@ function readTranscriptInfo(cid) {
 function loadCache() {
   try {
     const c = readCacheJson(CACHE_FILE);
-    if (c.v === 1 && c.files && c.rows) return c;
+    if (c.v === 2 && c.files && c.rows) return c;
+    if (c.v === 1 && c.files) {
+      // 从旧版升级：v1 的日期归属有错，缓存作废重扫。每个会话的旧行先留在 legacy 里，
+      // 重扫成功后用它从历史归档里扣掉旧值（见 scan 里的 rekey）
+      const legacy = {};
+      for (const [p, f] of Object.entries(c.files)) if (f.rows?.length) legacy[p] = f.rows;
+      return { v: 2, files: {}, rows: {}, legacy, upgrading: true };
+    }
   } catch {}
-  return { v: 1, files: {}, rows: {} };
+  return { v: 2, files: {}, rows: {} };
 }
 
 function saveCache(c) {
@@ -234,74 +268,103 @@ function saveCache(c) {
   } catch {}
 }
 
-async function scan() {
+const sumTokens = (rows) => rows.reduce((s, r) => s + r.input + r.output + r.cacheRead, 0);
+
+async function scan(archive) {
   const t0 = Date.now();
-  let files = [];
-  try {
-    files = fs.readdirSync(CONV_DIR).filter((f) => f.endsWith('.db'));
-  } catch { return { rows: [], scanMs: 0 }; }
+  const files = [];
+  for (const root of SESSION_ROOTS) {
+    try {
+      for (const f of fs.readdirSync(path.join(root, 'conversations'))) {
+        if (f.endsWith('.db')) files.push({ root, f });
+      }
+    } catch {} // 只装了其中一端时另一个目录不存在
+  }
+  if (!files.length) return { rows: [], scanMs: 0 };
 
   const cutoffMs = Date.now() - SCAN_DAYS * 86400000;
   const keepAfter = localDate(cutoffMs);
   const cache = loadCache();
   const activePaths = new Set();
   const rowsMap = {};
+  const addRows = (list) => {
+    for (const r of list) {
+      if (r.date < keepAfter) continue;
+      const key = `${r.date}|${r.model}|${r.cwd || ''}`;
+      const row = rowsMap[key] || (rowsMap[key] = {
+        date: r.date, model: r.model, cwd: r.cwd || null,
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+      });
+      row.input += r.input;
+      row.output += r.output;
+      row.cacheRead += r.cacheRead;
+      row.cacheWrite += (r.cacheWrite || 0);
+    }
+  };
+  const moves = []; // 升级时要在历史归档里换键的会话
 
-  for (const f of files) {
-    const dbPath = path.join(CONV_DIR, f);
+  for (const { root, f } of files) {
+    const dbPath = path.join(root, 'conversations', f);
     activePaths.add(dbPath);
     let st;
     try { st = fs.statSync(dbPath); } catch { continue; }
-    if (st.mtimeMs < cutoffMs) continue;
+    // 进行中的会话先写 -wal，主库的 mtime/size 要到 checkpoint 才变
+    let wal = null;
+    try { wal = fs.statSync(`${dbPath}-wal`); } catch {}
+    const mtimeMs = wal && wal.size ? Math.max(st.mtimeMs, wal.mtimeMs) : st.mtimeMs;
+    const walSize = wal ? wal.size : 0;
+    if (mtimeMs < cutoffMs) continue;
 
     const cachedFile = cache.files[dbPath];
-    if (cachedFile && cachedFile.mtimeMs === st.mtimeMs && cachedFile.size === st.size && cachedFile.rows) {
-      for (const r of cachedFile.rows) {
-        if (r.date < keepAfter) continue;
-        const key = `${r.date}|${r.model}|${r.cwd || ''}`;
-        const row = rowsMap[key] || (rowsMap[key] = {
-          date: r.date, model: r.model, cwd: r.cwd || null,
-          input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
-        });
-        row.input += r.input;
-        row.output += r.output;
-        row.cacheRead += r.cacheRead;
-        row.cacheWrite += (r.cacheWrite || 0);
-      }
+    if (cachedFile && cachedFile.mtimeMs === mtimeMs && cachedFile.size === st.size && cachedFile.walSize === walSize && cachedFile.rows) {
+      addRows(cachedFile.rows);
       continue;
     }
 
     const cid = f.replace(/\.db$/, '');
-    const fallbackDate = localDate(st.mtimeMs);
-    const { stepDates, cwd } = readTranscriptInfo(cid);
+    const fallbackDate = localDate(mtimeMs);
+    const { stepDates, cwd } = readTranscriptInfo(path.join(root, 'brain'), cid);
     const entries = await readDbEntries(dbPath);
-    const fileRows = [];
+    const fileRows = []; // 这里不按扫描窗口过滤：换键时要整个会话的新行
+    let lastStep = null;
 
     for (const e of entries) {
       const tok = parseTokensFromProto(e.data);
       // 过滤非生成事件及无 token 消耗的空记录（避免统计空转与假默认值污染）
       if (!tok || (tok.input + tok.output + tok.cacheRead === 0)) continue;
-      const date = stepDates.get(e.idx) || fallbackDate;
-      if (date < keepAfter) continue;
+      const step = firstStepIndex(e.data);
+      if (step != null) lastStep = step; // 个别记录不带步骤号，沿用上一条的
+      const date = stepDate(stepDates, lastStep) || fallbackDate; // 日志里查不到时才用文件时间
 
       const m = e.data.toString('latin1').match(/(gemini-[\w\.\-]+|claude-[\w\.\-]+|gpt-[\w\.\-]+|chatgpt-[\w\.\-]+|o1-[\w\.\-]+|o3-[\w\.\-]+)/i);
       const model = m ? m[1].toLowerCase() : 'gemini';
-      const key = `${date}|${model}|${cwd || ''}`;
-      const row = rowsMap[key] || (rowsMap[key] = {
-        date, model, cwd: cwd || null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
-      });
       const freshInput = Math.max(0, tok.input - tok.cacheRead); // prompt_token_count 官方文档写明已含 cached_content_token_count，需要减掉避免重复计费
-      row.input += freshInput;
-      row.output += tok.output;
-      row.cacheRead += tok.cacheRead;
-
       fileRows.push({
         date, model, cwd: cwd || null, input: freshInput, output: tok.output, cacheRead: tok.cacheRead,
       });
     }
 
-    cache.files[dbPath] = { mtimeMs: st.mtimeMs, size: st.size, rows: fileRows };
+    const old = cache.legacy?.[dbPath];
+    if (archive && old) {
+      // 会话只增不减。读出来比旧值还少，多半是这次没读全：不计数、不缓存，归档保持原样，下轮再试
+      if (sumTokens(fileRows) < sumTokens(old)) continue;
+      moves.push({ dbPath, id: `step-dates:${path.basename(root)}/${cid}`, remove: old, add: fileRows });
+    } else if (archive && cache.upgrading) {
+      moves.push({ dbPath, id: `step-dates:${path.basename(root)}/${cid}`, remove: [], add: fileRows });
+    }
+
+    addRows(fileRows);
+    cache.files[dbPath] = { mtimeMs, size: st.size, walSize, rows: fileRows };
   }
+
+  if (moves.length) {
+    const saved = archive.rekey('antigravity', moves);
+    for (const m of moves) {
+      if (saved) delete cache.legacy?.[m.dbPath];
+      else delete cache.files[m.dbPath]; // 归档没写进磁盘：下轮重读这个会话，再确认一次
+    }
+  }
+  delete cache.upgrading;
 
   // 清理不存在的旧缓存
   for (const p of Object.keys(cache.files)) {
@@ -313,8 +376,8 @@ async function scan() {
   return { rows: Object.values(rowsMap), scanMs: Date.now() - t0 };
 }
 
-export function createAntigravityAdapter() {
-  const rowsCache = swr(5 * 60_000, async () => scan());
+export function createAntigravityAdapter({ archive } = {}) {
+  const rowsCache = swr(5 * 60_000, async () => scan(archive));
   let lastScanMs = 0, lastScanOk = 0;
   const gate = staleGate(60_000, SNAPSHOT_MAX_AGE, fetchQuotaFromLS);
   let lastOk = 0, lastLatency = 0;

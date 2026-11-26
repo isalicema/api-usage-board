@@ -5,6 +5,7 @@
 //       - 取 max 而不是相加：重复合并幂等，不会重复计数；
 //       - 只对「已稳定」的日期生效（早于今天 SETTLE_DAYS 天）：近几天的数据还在涨，以当前扫描为准，不入档；
 //       - 当前扫描比归档小（缓存被重置、源文件被压缩/删除、窗口滚动）→ 归档补回，累计不会缩水。
+// 例外：渠道修正了行的身份字段（例如日期归错了）时，同一笔用量会换键，只靠 merge 会新旧各留一份——要用 rekey()。
 // 代价：取 max 意味着「往下修正」不会生效（例如之前手工扣掉的重复计数）。需要修正时用
 //       `node server/tools/archive.mjs drop <渠道> <日期>` 删掉那天的归档，再让渠道重新扫出正确值。
 import fs from 'node:fs';
@@ -85,6 +86,43 @@ export function createArchive({ file = ARCHIVE_FILE, cacheDir = CACHE_DIR, flush
     return [...out.values()];
   }
 
+  // 把一批会话的用量从旧键挪到新键。items: [{ id, remove: 旧行, add: 新行 }]。
+  // 先按键汇总扣掉旧行（最多扣到 0，现有会话复现不出的老数据原样留着），再把已稳定日期的新行加回。
+  // id 和数据在同一次原子写里落盘，重复调用不会扣两次。返回 true = 已经写到磁盘。
+  function rekey(channel, items) {
+    const d = load();
+    const done = (d.rekeys ||= {})[channel] ||= {};
+    const todo = items.filter((it) => !done[it.id]);
+    if (todo.length) {
+      const arch = d.ch[channel] || (d.ch[channel] = {});
+      const settled = localDate(now() - SETTLE_DAYS * 86400000);
+      const byKey = (rows) => {
+        const m = new Map();
+        for (const r of rows) {
+          const k = rowKey(r), cur = m.get(k);
+          if (cur) { for (const f of NUM) if (r[f] != null) cur[f] = (cur[f] || 0) + r[f]; } else m.set(k, { ...r });
+        }
+        return m;
+      };
+      try { if (!fs.existsSync(`${file}.pre-rekey`)) fs.copyFileSync(file, `${file}.pre-rekey`); }
+      catch (e) { if (e.code !== 'ENOENT') console.warn(`[archive] 迁移前备份失败：${e.message}`); }
+      for (const [k, r] of byKey(todo.flatMap((it) => it.remove))) {
+        const a = arch[k];
+        if (!a) continue;
+        for (const f of NUM) if (r[f]) a[f] = Math.max(0, (a[f] || 0) - r[f]);
+        if ([...NUM].every((f) => !a[f])) delete arch[k];
+      }
+      for (const [k, r] of byKey(todo.flatMap((it) => it.add).filter((r) => r.date <= settled))) {
+        const a = arch[k];
+        if (!a) arch[k] = r;
+        else for (const f of NUM) if (r[f] != null) a[f] = (a[f] || 0) + r[f];
+      }
+      for (const it of todo) done[it.id] = 1;
+      dirty = true;
+    }
+    return dirty ? flush() : true;
+  }
+
   function drop(channel, date) { // 人工修正：删某渠道某天的归档
     const d = load(), arch = d.ch[channel] || {}; let n = 0;
     for (const [k, a] of Object.entries(arch)) if (a.date === date) { delete arch[k]; n++; }
@@ -99,5 +137,5 @@ export function createArchive({ file = ARCHIVE_FILE, cacheDir = CACHE_DIR, flush
     }));
   }
   load(); // 立刻加载：首次创建时要趁渠道还没改写缓存，把升级前的历史行收进来（见 seedFromCaches）
-  return { merge, flush, drop, stats, _data: () => load() };
+  return { merge, rekey, flush, drop, stats, _data: () => load() };
 }

@@ -100,7 +100,8 @@ nohup "/path/to/api-usage-board/serve.command" >> ~/Library/Logs/api-usage-board
 ## 已知限制
 
 - Claude/Codex 的配额直连走的是未公开接口（跟随官方客户端行为），可能随时漂移；都有降级链（直连失败→旧方案→offline），不会直接报错
-- Antigravity **配额**仍靠机会主义采集，凭证位置未定位，只有 agy 运行时才能查到，不跑则显示"未运行"；**Token 用量**已从本地会话库解析，跟 agy 是否运行无关（社区 PR #1 贡献）
+- Antigravity **配额**仍靠机会主义采集，凭证位置未定位，只有 agy 运行时才能查到，不跑则显示"未运行"；**Token 用量**从 CLI（`~/.gemini/antigravity-cli`）和桌面客户端（`~/.gemini/antigravity`）两处本地会话库解析，跟 agy 是否运行无关（社区 PR #1 贡献）；旧格式 `.pb` 会话读不了
+- 从旧版升级：旧版漏算桌面客户端用量，跨天的 CLI 会话也可能记错日期。升级后首次扫描会自动补算，并把历史归档里记错日期的部分挪到正确日期（不重复计数），所以一些历史日期的数字会变；迁移前的归档另存为 `server/data/history-archive.json.pre-rekey`。自动迁移依赖旧版的扫描缓存：升级前如果删掉过 `server/.cache/` 里的 Antigravity 缓存和备份，迁移不会发生，部分日期可能重复计数，需要停掉服务后用 `archive.mjs drop` 清掉受影响的日期再重扫（现有会话文件复现不出的旧数据会一起清掉）
 - Grok Build（Grok CLI / SuperGrok）的 token 序列是上下文快照近似值，不是精确计量
 - Cursor 没有本地干净日志：在 Token 用量 tab 的 Coding Agent 面板里占位（标「仅配额 · 见 Dashboard」），不进趋势/费用
 - Grok Bot（Sand 架构）：**配额**优先通过 Cursor 凭证接口请求，网络异常或凭证过期时自动回退读取桌面客户端本地切片（`weekly-usage.cache`，过期标记 stale 并提示离线）；**Token 用量**支持通过本地会话切片（`transcript.replicas`）进行会话文本估算（去重累加，仅本地可见部分，暂不进费用估值与订阅回报）
